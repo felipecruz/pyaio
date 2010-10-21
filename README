@@ -1,3 +1,11 @@
 Python Asynchronous I/O bindings (aio.h)
 
-
+Examples:
+  - read
+  
+		import pyaio
+		
+		def aio_callback(buf):
+		    print 'python callback %s' % buf
+		
+		pyaio.aio_read('/tmp/b.txt', 10, 20, aio_callback)
