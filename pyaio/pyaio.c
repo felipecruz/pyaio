@@ -28,14 +28,13 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 	cb = aio->cb;
 	callback = aio->callback;
 
-	buff = malloc((cb->aio_nbytes + 1) * sizeof(char));
+	buff = malloc((cb->aio_nbytes) * sizeof(char));
 	strncpy(buff, (char*)cb->aio_buf, cb->aio_nbytes);
-	buff[cb->aio_nbytes] = '\0';
+	//buff[cb->aio_nbytes] = '\0';
 
 	//printf("buff %s %d\n", buff, aio_error( cb ));
 
 	Py_XINCREF(callback);
-
 	args = Py_BuildValue("(s)", buff);
 	Py_XINCREF(args);
 
@@ -60,11 +59,14 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
 	cb = aio->cb;
 	callback = aio->callback;
 
+	Py_XINCREF(callback);
+
 	if (aio_error( cb ) == 0) {
 		//printf("C callback called %d\n", aio_error( cb ));
 		PyObject_CallObject(callback, NULL);
 	}
 
+	Py_XDECREF(callback);
 	return;
 }
 
@@ -85,7 +87,7 @@ pyaio_read(PyObject *dummy, PyObject *args) {
 					"parameter must be callable");
 			return NULL;
 		}
-		//Py_XINCREF(callback); /* Add a reference to new callback */
+		Py_XINCREF(callback); /* Add a reference to new callback */
 	}
 
 	file = fopen(filename, "r");
@@ -145,7 +147,7 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 					"parameter must be callable");
 			return NULL;
 		}
-		//Py_XINCREF(callback); /* Add a reference to new callback */
+		Py_XINCREF(callback); /* Add a reference to new callback */
 	}
 
 	file = fopen(filename, "w");
