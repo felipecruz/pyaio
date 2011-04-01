@@ -91,6 +91,11 @@ pyaio_read(PyObject *dummy, PyObject *args) {
 	}
 
 	file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Error opening file\n");
+        PyErr_SetString(PyExc_IOError, "No such file or directory");
+        return NULL;
+    }
 
 	aio = malloc(sizeof(Pyaio_cb));
 
@@ -151,7 +156,11 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 	}
 
 	file = fopen(filename, "w");
-
+    if (file == NULL) {
+        printf("Error opening file\n");
+        PyErr_SetString(PyExc_IOError, "No such file or directory");
+        return NULL;
+    }
 	aio = malloc(sizeof(Pyaio_cb));
 
 	aio->cb = malloc(sizeof(struct aiocb));
