@@ -3,7 +3,7 @@ from distutils.core import setup, Extension
 version = "0.1"
 
 mymodule = Extension('pyaio', 
-                     sources = ['pyaio.c'], 
+                     sources = ['pyaio/pyaio.c'], 
                      libraries = ['rt'],
                      define_macros=[
                                 ("PYAIO_VERSION",
