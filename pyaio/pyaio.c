@@ -30,9 +30,7 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 
 	buff = malloc((cb->aio_nbytes) * sizeof(char));
 	strncpy(buff, (char*)cb->aio_buf, cb->aio_nbytes);
-	//buff[cb->aio_nbytes] = '\0';
-
-	//printf("buff %s %d\n", buff, aio_error( cb ));
+	buff[cb->aio_nbytes] = '\0';
 
 	Py_XINCREF(callback);
 	args = Py_BuildValue("(s)", buff);
@@ -62,7 +60,6 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
 	Py_XINCREF(callback);
 
 	if (aio_error( cb ) == 0) {
-		//printf("C callback called %d\n", aio_error( cb ));
 		PyObject_CallObject(callback, NULL);
 	}
 
