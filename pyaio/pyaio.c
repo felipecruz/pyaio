@@ -41,6 +41,8 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 		PyObject_CallObject(callback, args);
 	}
 
+    close(cb->aio_fildes);
+
 	Py_XDECREF(args);
 	Py_XDECREF(callback);
 
@@ -62,6 +64,8 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
 	if (aio_error( cb ) == 0) {
 		PyObject_CallObject(callback, NULL);
 	}
+
+    close(cb->aio_fildes);
 
 	Py_XDECREF(callback);
 	return;
