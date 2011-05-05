@@ -19,7 +19,7 @@ setup(
     author_email = 'felipecruz@loogica.net',
     classifiers =   [
                     'Operating System :: POSIX',
-                    'Development Status :: 4 - Beta'
+                    'Development Status :: 4 - Beta',
                     'License :: OSI Approved :: BSD License'
                     ],
     ext_modules = [mymodule])
