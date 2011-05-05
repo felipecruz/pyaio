@@ -11,7 +11,16 @@ mymodule = Extension('pyaio',
                                ]
                     )
 
-setup(name = 'pyaio', version = '0.1',
-   description = 'Python Asynchronous I/O bindings (aio.h)',
-   ext_modules = [mymodule])
+setup(
+    name = 'pyaio', 
+    version = '0.1',
+    description = 'Python Asynchronous I/O bindings (aio.h)',
+    author = 'Felipe Cruz',
+    author_email = 'felipecruz@loogica.net',
+    classifiers =   [
+                    'Operating System :: POSIX',
+                    'Development Status :: 4 - Beta'
+                    'License :: OSI Approved :: BSD License'
+                    ],
+    ext_modules = [mymodule])
 
