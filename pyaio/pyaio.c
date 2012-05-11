@@ -28,7 +28,7 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 	cb = aio->cb;
 	callback = aio->callback;
 
-	buff = malloc((cb->aio_nbytes) * sizeof(char));
+	buff = malloc((cb->aio_nbytes + 1) * sizeof(char));
 	strncpy(buff, (char*)cb->aio_buf, cb->aio_nbytes);
 	buff[cb->aio_nbytes] = '\0';
 
@@ -36,9 +36,11 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 	args = Py_BuildValue("(s)", buff);
 	Py_XINCREF(args);
 
-	if (aio_error( cb ) == 0) {
-		//printf("%p\n", callback);
+	if (aio_error(cb) == 0 && aio_return(cb) > 0) {
+        PyGILState_STATE gstate;
+        gstate = PyGILState_Ensure();
 		PyObject_CallObject(callback, args);
+        PyGILState_Release(gstate);
 	}
 
     close(cb->aio_fildes);
@@ -61,12 +63,14 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
 
 	Py_XINCREF(callback);
 
-	if (aio_error( cb ) == 0) {
+	if (aio_error(cb) == 0) {
+        PyGILState_STATE gstate;
+        gstate = PyGILState_Ensure();
 		PyObject_CallObject(callback, NULL);
+        PyGILState_Release(gstate);
 	}
 
     close(cb->aio_fildes);
-
 	Py_XDECREF(callback);
 	return;
 }
@@ -93,7 +97,6 @@ pyaio_read(PyObject *dummy, PyObject *args) {
 
 	file = fopen(filename, "r");
     if (file == NULL) {
-        printf("Error opening file\n");
         PyErr_SetString(PyExc_IOError, "No such file or directory");
         return NULL;
     }
@@ -158,7 +161,6 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 
 	file = fopen(filename, "w");
     if (file == NULL) {
-        printf("Error opening file\n");
         PyErr_SetString(PyExc_IOError, "No such file or directory");
         return NULL;
     }
@@ -183,9 +185,6 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 
 	((char*)aio->cb->aio_buf)[numbytes] = '\0';
 
-	//printf("%s\n", aio->cb->aio_buf);
-	//printf("%d\n", numbytes);
-
 	aio->cb->aio_fildes = fileno(file);
 	aio->cb->aio_nbytes = numbytes;
 	aio->cb->aio_offset = offset;
@@ -196,8 +195,6 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 	aio->cb->aio_sigevent.sigev_value.sival_ptr = aio;
 
 	ret = aio_write(aio->cb);
-
-	//printf("write return %d\n", ret);
 
 	if (ret < 0)
 		perror("aio_write");

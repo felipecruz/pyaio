@@ -1,26 +1,15 @@
 import pyaio
 
-def aio_callback(buf):
-    print 'python callback %s' % buf
-    return
-    
-def aio_callback2(buf):
-    print '2 python callback %s' % buf
-    return
-    
-def aio_callback3():
-    print 'done writing!'
-    return
-    
-pyaio.aio_read('/tmp/a.txt', 0, 10, aio_callback2)
+def test_aio_read():
+    def callback(buf):
+        print buf
 
-pyaio.aio_read('/tmp/b.txt', 10, 20, aio_callback)
+    ret = pyaio.aio_read("./pyaio/pyaio.c", 0, 20, callback)
+    assert ret == 0
 
-pyaio.aio_write('/tmp/c.txt', "Writing Test.......", 0, 10, aio_callback3)
+def test_aio_write():
+    def callback2():
+        print "Done"
 
-pyaio.aio_write('/tmp/c.txt', "Writing Test.......", 15, 15, aio_callback3)
-
-pyaio.aio_write('/tmp/c.txt', "Writing Test.......", 30, 15, aio_callback3)
-
-import time
-time.sleep(1)
+    ret = pyaio.aio_write("/tmp/c.txt", "pyaiopyaio", 0, 10, callback2)
+    assert ret == 0
