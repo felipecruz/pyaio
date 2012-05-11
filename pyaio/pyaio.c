@@ -42,13 +42,10 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
 		PyObject_CallObject(callback, args);
         PyGILState_Release(gstate);
 	}
-
     close(cb->aio_fildes);
 
 	Py_XDECREF(args);
 	Py_XDECREF(callback);
-
-	return;
 }
 
 static void aio_write_completion_handler(int sig, siginfo_t *info, void *context)
@@ -72,7 +69,6 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
 
     close(cb->aio_fildes);
 	Py_XDECREF(callback);
-	return;
 }
 
 static PyObject *
