@@ -43,9 +43,9 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
         PyGILState_Release(gstate);
     }
     close(cb->aio_fildes);
-
-    Py_XDECREF(args);
-    Py_XDECREF(callback);
+    free(cb->aio_buf);
+    free(cb);
+    free(buff);
 }
 
 static void aio_write_completion_handler(int sig, siginfo_t *info, void *context)
@@ -68,7 +68,8 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
     }
 
     close(cb->aio_fildes);
-    Py_XDECREF(callback);
+    free(cb->aio_buf);
+    free(cb);
 }
 
 static PyObject *
@@ -204,7 +205,7 @@ pyaio_write(PyObject *dummy, PyObject *args) {
 }
 
 
-static PyMethodDef TutorialMethods[] = {
+static PyMethodDef PyaioMethods[] = {
 
         { "aio_read", pyaio_read,
         METH_VARARGS, pyaio_read_doc },
@@ -240,9 +241,9 @@ init_pyaio(void) {
     }
 
 #if PY_MAJOR_VERSION >= 3
-    m = Py_InitModule("pyaio", TutorialMethods);
+    m = Py_InitModule("pyaio", PyaioMethods);
 #else
-    m = Py_InitModule3("pyaio", TutorialMethods, NULL);
+    m = Py_InitModule3("pyaio", PyaioMethods, NULL);
 #endif
 
     if (!m) {
