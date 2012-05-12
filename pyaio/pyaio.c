@@ -8,8 +8,6 @@ typedef struct py_aio_callback {
     PyObject *callback;
 } Pyaio_cb;
 
-static PyObject *MyModuleError;
-
 PyDoc_STRVAR(pyaio_read_doc,
         "aio_read(filename, offset, len, callback)\n");
 
@@ -215,6 +213,19 @@ static PyMethodDef PyaioMethods[] = {
 
         { NULL, NULL, 0, NULL }
 };
+#if PY_MAJOR_VERSION >= 3
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "pyaio",                             /* m_name      */
+    "Python POSIX aio (aio.h) bindings", /* m_doc       */
+    -1,                                  /* m_size      */
+    PyaioMethods,                        /* m_methods   */
+    NULL,                                /* m_reload    */ 
+    NULL,                                /* m_traverse  */
+    NULL,                                /* m_clear     */
+    NULL,                                /* m_free      */
+};
+#endif
 
 PyObject *
 init_pyaio(void) {
@@ -231,31 +242,19 @@ init_pyaio(void) {
         return NULL;
     }
 
-    MyModuleError = PyErr_NewException("pyaio.error", NULL, NULL);
-
-    Py_INCREF(MyModuleError);
-
-    if (!MyModuleError) {
-        Py_DECREF(__version__);
-        return NULL;
-    }
-
 #if PY_MAJOR_VERSION >= 3
-    m = Py_InitModule("pyaio", PyaioMethods);
+    m = PyModule_Create(&moduledef);
 #else
     m = Py_InitModule3("pyaio", PyaioMethods, NULL);
 #endif
 
     if (!m) {
         Py_DECREF(__version__);
-        Py_DECREF(MyModuleError);
         return NULL;
     }
 
-    if (PyModule_AddObject(m, "__version__", __version__)
-            || PyModule_AddObject(m, "error", MyModuleError)) {
+    if (PyModule_AddObject(m, "__version__", __version__)) {
         Py_DECREF(__version__);
-        Py_DECREF(MyModuleError);
         Py_DECREF(m);
         return NULL;
     }
