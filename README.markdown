@@ -21,7 +21,7 @@ Writing
 import pyaio
 
 def aio_callback():
-print 'done writing!'
+    print 'done writing!'
 
-pyaio.aio_write('/tmp/pyaio.txt', "Writing Test.......", 30, 15, aio_callbac)
+pyaio.aio_write('/tmp/pyaio.txt', "Writing Test.......", 30, 15, aio_callback)
 ```
