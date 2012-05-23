@@ -21,6 +21,9 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
     PyObject *callback, *args;
     char* buff;
 
+    PyGILState_STATE gstate;
+    gstate = PyGILState_Ensure();
+
     aio = (Pyaio_cb*) info->si_value.sival_ptr;
 
     cb = aio->cb;
@@ -29,21 +32,25 @@ static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
     buff = malloc((cb->aio_nbytes + 1) * sizeof(char));
     strncpy(buff, (char*)cb->aio_buf, cb->aio_nbytes);
     buff[cb->aio_nbytes] = '\0';
+    
+    args = Py_BuildValue("(s)", buff);
 
     Py_XINCREF(callback);
-    args = Py_BuildValue("(s)", buff);
     Py_XINCREF(args);
 
     if (aio_error(cb) == 0 && aio_return(cb) > 0) {
-        PyGILState_STATE gstate;
-        gstate = PyGILState_Ensure();
         PyObject_CallObject(callback, args);
-        PyGILState_Release(gstate);
     }
+
+    Py_XDECREF(callback);
+    Py_XDECREF(args);
+
     close(cb->aio_fildes);
     free(cb->aio_buf);
     free(cb);
     free(buff);
+    
+    PyGILState_Release(gstate);
 }
 
 static void aio_write_completion_handler(int sig, siginfo_t *info, void *context)
@@ -52,6 +59,9 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
     struct aiocb *cb;
     PyObject *callback;
 
+    PyGILState_STATE gstate;
+    gstate = PyGILState_Ensure();
+
     aio = (Pyaio_cb*) info->si_value.sival_ptr;
     cb = aio->cb;
     callback = aio->callback;
@@ -59,15 +69,16 @@ static void aio_write_completion_handler(int sig, siginfo_t *info, void *context
     Py_XINCREF(callback);
 
     if (aio_error(cb) == 0) {
-        PyGILState_STATE gstate;
-        gstate = PyGILState_Ensure();
         PyObject_CallObject(callback, NULL);
-        PyGILState_Release(gstate);
     }
+
+    Py_XDECREF(callback);
 
     close(cb->aio_fildes);
     free(cb->aio_buf);
     free(cb);
+        
+    PyGILState_Release(gstate);
 }
 
 static PyObject *
