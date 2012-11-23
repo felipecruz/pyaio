@@ -3,13 +3,14 @@ from distutils.core import setup, Extension
 version = '0.2'
 
 mymodule = \
-    Extension('pyaio', 
-    sources = ['pyaio/pyaio.c'], 
+    Extension('pyaio',
+    sources = ['pyaio/pyaio.c'],
     libraries = ['rt'],
+    extra_compile_args = ['-D_FILE_OFFSET_BITS=64'],
     define_macros=[('PYAIO_VERSION', '"{0}"'.format(version))])
 
 setup(
-    name = 'pyaio', 
+    name = 'pyaio',
     version = '0.2',
     description = 'Python Asynchronous I/O bindings (aio.h)',
     author = 'Felipe Cruz',
