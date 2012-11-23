@@ -1,11 +1,19 @@
 Python Asynchronous I/O bindings (aio.h)
 ========================================
 
-Version 0.2
-Working on Linux only
+Version 0.3
+**Linux only**
 
 Reading
-    aio_read(fileno, file-offset, length, callback)
+-------
+
+API
+
+``python
+aio_read(fileno, file-offset, length, callback)
+``
+
+Example
 
 ```python
 import pyaio
@@ -24,7 +32,15 @@ pyaio.aio_read(fd, 10, 20, aio_callback)
 ```
 
 Writing
-    aio_write(fileno, buffer-object, file-offset, callback)
+-------
+
+API
+
+``python
+aio_write(fileno, buffer-object, file-offset, callback)
+``
+
+Example
 
 ```python
 import pyaio
