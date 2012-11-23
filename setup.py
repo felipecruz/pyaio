@@ -1,6 +1,6 @@
 from distutils.core import setup, Extension
 
-version = '0.2'
+version = '0.3'
 
 mymodule = \
     Extension('pyaio',
@@ -11,7 +11,7 @@ mymodule = \
 
 setup(
     name = 'pyaio',
-    version = '0.2',
+    version = version,
     description = 'Python Asynchronous I/O bindings (aio.h)',
     author = 'Felipe Cruz',
     author_email = 'felipecruz@loogica.net',
