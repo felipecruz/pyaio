@@ -10,7 +10,7 @@ Reading
 API
 
 ``python
-aio_read(fileno, file-offset, length, callback)
+view = aio_read(fileno, file-offset, length, callback)
 ``
 
 Example
@@ -54,4 +54,19 @@ def aio_callback(rt, errno):
 
 fd = os.open('/tmp/pyaio.txt', os.O_WRONLY)
 pyaio.aio_write(fd, "Writing Test.......", 30, aio_callback)
+```
+
+gevent Wrapper
+--------------
+
+For a file() like wrapper around aio_read and aio_write using gevent
+a 'buffer' keyword argument to aioFile controls its internal buffer size
+
+```python
+from pyaio.gevent import aioFile
+with aioFile('/tmp/pyaio.txt') as fr:
+    data = fr.read()  # Entire File
+
+with aioFile('/tmp/pyaio.txt', 'w') as fw:
+    fw.write(data)
 ```
