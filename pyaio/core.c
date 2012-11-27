@@ -1,13 +1,16 @@
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <aio.h>
 #include <signal.h>
 #include <string.h>
 #include <fcntl.h>
-#include <stdint.h>
+#include <errno.h>
+#include <unistd.h>
 
 typedef struct py_aio_callback {
     struct aiocb *cb;
     PyObject *callback;
+    PyObject *buffer;
 } Pyaio_cb;
 
 PyDoc_STRVAR(pyaio_read_doc,
@@ -16,105 +19,73 @@ PyDoc_STRVAR(pyaio_read_doc,
 PyDoc_STRVAR(pyaio_write_doc,
         "aio_write(fileno, buffer, offset, callback)\n");
 
-static void aio_read_completion_handler(int sig, siginfo_t *info, void *context)
+static int _async_callback(void *arg)
 {
-    Pyaio_cb *aio;
+    Pyaio_cb *aio = (Pyaio_cb *)arg;
     struct aiocb *cb;
-    PyObject *callback, *args;
-    int read_size = 0;
-    char *read_buf = NULL;
-
-    PyGILState_STATE gstate;
-    gstate = PyGILState_Ensure();
-
-    aio = (Pyaio_cb*) info->si_value.sival_ptr;
+    PyObject *callback, *args, *result, *buffer;
+    Py_ssize_t read_size = 0;
+    Py_buffer pbuf;
 
     cb = aio->cb;
     callback = aio->callback;
+    buffer = aio->buffer;
 
-    /* Lets only let python know about how much was actually read */
-    if (aio_return(cb) > 0) {
-        read_size = aio_return(cb);
-        read_buf = cb->aio_buf;
+    if (buffer == NULL) {
+        if (aio_return(cb) > 0) {
+            read_size = aio_return(cb);
+        }
+        /* Create a return buffer */
+        PyBuffer_FillInfo(&pbuf, 0, (void *)cb->aio_buf, read_size, 0,
+                            PyBUF_CONTIG);
+        args = Py_BuildValue("(Nni)", PyMemoryView_FromBuffer(&pbuf),
+                             aio_return(cb), aio_error(cb));
+    }
+    else { /* WRITE */
+        args = Py_BuildValue("(ni)", aio_return(cb), aio_error(cb));
+    }
+    Py_XINCREF(args);
+    result = PyObject_CallObject(callback, args);
+    if (result == NULL) {
+        printf("Exception in aio callback, dying!\n");
+        kill(getpid(), SIGKILL);  // DIE FAST
+    }
+    Py_XDECREF(result);
+    Py_XDECREF(callback);
+    Py_XDECREF(args);
+    if (buffer != NULL) {
+        Py_XDECREF(buffer);
+    }
+    free((struct aiocb *)cb);
+    free(aio);
+    return 0;
+}
+
+static void aio_completion_handler(sigval_t sigval)
+{
+    Pyaio_cb *aio;
+    int tries = 1;
+    aio = (Pyaio_cb*) sigval.sival_ptr;
+
+    //We should set an upper limit like 50 retries or something
+    while(Py_AddPendingCall(&_async_callback, aio) < 0) {
+        usleep(500*(tries/2)); //Step off timer
+        tries += 1;
     }
 
-    args = Py_BuildValue("(s#ii)", read_buf, read_size,
-                         aio_return(cb), aio_error(cb));
-
-    Py_XINCREF(callback);
-    Py_XINCREF(args);
-
-    PyObject_CallObject(callback, args);
-
-    Py_XDECREF(callback);
-    Py_XDECREF(args);
-
-    free(cb->aio_buf);
-    free(cb);
-
-    PyGILState_Release(gstate);
-}
-
-static void aio_write_completion_handler(int sig, siginfo_t *info, void *context)
-{
-    Pyaio_cb *aio;
-    struct aiocb *cb;
-    PyObject *callback, *args;
-
-    PyGILState_STATE gstate;
-    gstate = PyGILState_Ensure();
-
-    aio = (Pyaio_cb*) info->si_value.sival_ptr;
-    cb = aio->cb;
-    callback = aio->callback;
-
-    args = Py_BuildValue("(ii)", aio_return(cb), aio_error(cb));
-
-    Py_XINCREF(callback);
-    Py_XINCREF(args);
-
-    PyObject_CallObject(callback, args);
-
-    Py_XDECREF(callback);
-    Py_XDECREF(args);
-
-    free(cb->aio_buf);
-    free(cb);
-
-    PyGILState_Release(gstate);
-}
-
-static void init_sig_handlers()
-{
-    struct sigaction *sa;
-
-    /* Install Read Handler */
-    sa = malloc(sizeof(struct sigaction));
-    //sa->sa_flags = SA_RESTART;
-    sigemptyset(&sa->sa_mask);
-    sa->sa_sigaction = aio_read_completion_handler;
-    sa->sa_flags = SA_SIGINFO;
-    sigaction(SIGRTMIN+10, sa, NULL);
-
-    /* Install Write Handler */
-    sa = malloc(sizeof(struct sigaction));
-    //sa->sa_flags = SA_RESTART;
-    sigemptyset(&sa->sa_mask);
-    sa->sa_sigaction = aio_write_completion_handler;
-    sa->sa_flags = SA_SIGINFO;
-    sigaction(SIGRTMIN+11, sa, NULL);
+    return;
 }
 
 static PyObject *
 pyaio_read(PyObject *dummy, PyObject *args) {
 
-    int ret, numbytes, fd;
-    uint64_t offset;
+    int fd;
+    Py_ssize_t numbytes, offset, ret;
 
     Pyaio_cb *aio;
     PyObject *callback, *return_;
-
-    if (PyArg_ParseTuple(args, "iKiO:set_callback", &fd, &offset, &numbytes,
+    Py_XINCREF(args);
+    if (PyArg_ParseTuple(args, "innO:set_callback", &fd, &offset, &numbytes,
                                  &callback)) {
         if (!PyCallable_Check(callback)) {
             PyErr_SetString(PyExc_TypeError,
@@ -123,82 +94,96 @@ pyaio_read(PyObject *dummy, PyObject *args) {
         }
         Py_XINCREF(callback); /* Add a reference to new callback */
     }
-
+    Py_XDECREF(args);
     aio = malloc(sizeof(Pyaio_cb));
 
     aio->cb = malloc(sizeof(struct aiocb));
     bzero((char *) aio->cb, sizeof(struct aiocb));
 
     aio->callback = callback;
+    aio->buffer = NULL;
 
     aio->cb->aio_buf = malloc((numbytes) * sizeof(char));
     aio->cb->aio_fildes = fd;
     aio->cb->aio_nbytes = numbytes;
     aio->cb->aio_offset = offset;
-    aio->cb->aio_sigevent.sigev_notify =  SIGEV_SIGNAL;
-    aio->cb->aio_sigevent.sigev_signo = SIGRTMIN+10;
+    aio->cb->aio_sigevent.sigev_notify = SIGEV_THREAD;  /* EvIL */
     aio->cb->aio_sigevent.sigev_notify_attributes = NULL;
+    aio->cb->aio_sigevent.sigev_notify_function = aio_completion_handler;
     aio->cb->aio_sigevent.sigev_value.sival_ptr = aio;
 
     ret = aio_read(aio->cb);
 
-    return_ = Py_BuildValue("i", ret);
-
-    Py_XINCREF(return_);
-
-    return return_;
-
+    if (ret < 0) {
+        return PyErr_SetFromErrno(PyExc_IOError);
+    }
+    else {
+        return_ = Py_BuildValue("n", ret);
+        Py_XINCREF(return_);
+        return return_;
+    }
 }
-
 
 static PyObject *
 pyaio_write(PyObject *dummy, PyObject *args) {
 
-    const char *buffer;
-    int ret, numbytes, fd;
-    uint64_t offset;
+    PyObject *buffer;
+    Py_buffer *buffer_view;
+
+    int fd;
+    Py_ssize_t offset, ret;
 
     Pyaio_cb *aio;
     PyObject *callback, *return_;
-
-    if (PyArg_ParseTuple(args, "is#KO:set_callback", &fd, &buffer,
-                         &numbytes, &offset, &callback)) {
+    Py_XINCREF(args);
+    if (PyArg_ParseTuple(args, "iOnO:set_callback", &fd, &buffer,
+                          &offset, &callback)) {
         if (!PyCallable_Check(callback)) {
             PyErr_SetString(PyExc_TypeError,
                     "parameter must be callable");
             return NULL;
         }
+        if (!PyObject_CheckBuffer(buffer)) {
+            PyErr_SetString(PyExc_TypeError,
+                    "write buffer must support buffer interface");
+            return NULL;
+        }
         Py_XINCREF(callback); /* Add a reference to new callback */
     }
+    Py_XDECREF(args);
+    /* Get a Memoryview */
+    if (!PyMemoryView_Check(buffer)) {
+        buffer = PyMemoryView_GetContiguous(buffer, PyBUF_READ, 'C');
+    }
+    Py_XINCREF(buffer);
+    buffer_view = PyMemoryView_GET_BUFFER(buffer);
 
     aio = malloc(sizeof(Pyaio_cb));
 
     aio->cb = malloc(sizeof(struct aiocb));
-    bzero((char *) aio->cb, sizeof(struct aiocb));
+    bzero((void *) aio->cb, sizeof(struct aiocb));
 
     aio->callback = callback;
-
-    aio->cb->aio_buf = malloc((numbytes) * sizeof(char));
-
-    strncpy((char*)aio->cb->aio_buf, buffer, numbytes);
-
+    aio->buffer = buffer;
+    aio->cb->aio_buf = buffer_view->buf;
     aio->cb->aio_fildes = fd;
-    aio->cb->aio_nbytes = numbytes;
+    aio->cb->aio_nbytes = buffer_view->len;
     aio->cb->aio_offset = offset;
-    aio->cb->aio_sigevent.sigev_notify =  SIGEV_SIGNAL;
-    aio->cb->aio_reqprio = 0;
-    aio->cb->aio_sigevent.sigev_signo = SIGRTMIN+11;
-    //aio->cb->aio_sigevent.sigev_notify_attributes = NULL;
+    aio->cb->aio_sigevent.sigev_notify = SIGEV_THREAD;
+    aio->cb->aio_sigevent.sigev_notify_attributes = NULL;
+    aio->cb->aio_sigevent.sigev_notify_function = aio_completion_handler;
     aio->cb->aio_sigevent.sigev_value.sival_ptr = aio;
 
     ret = aio_write(aio->cb);
 
-    return_ = Py_BuildValue("i", ret);
-
-    Py_XINCREF(return_);
-
-    return return_;
-
+    if (ret < 0) {
+        return PyErr_SetFromErrno(PyExc_IOError);
+    }
+    else {
+        return_ = Py_BuildValue("n", ret);
+        Py_XINCREF(return_);
+        return return_;
+    }
 }
 
 
@@ -215,7 +200,7 @@ static PyMethodDef PyaioMethods[] = {
 #if PY_MAJOR_VERSION >= 3
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
-    "pyaio",                             /* m_name      */
+    "core",                             /* m_name      */
     "Python POSIX aio (aio.h) bindings", /* m_doc       */
     -1,                                  /* m_size      */
     PyaioMethods,                        /* m_methods   */
@@ -244,7 +229,7 @@ init_pyaio(void) {
 #if PY_MAJOR_VERSION >= 3
     m = PyModule_Create(&moduledef);
 #else
-    m = Py_InitModule3("pyaio", PyaioMethods, NULL);
+    m = Py_InitModule3("core", PyaioMethods, NULL);
 #endif
 
     if (!m) {
@@ -258,19 +243,17 @@ init_pyaio(void) {
         return NULL;
     }
 
-    init_sig_handlers();
-
     return m;
 }
 
 #if PY_MAJOR_VERSION >= 3
 PyMODINIT_FUNC
-PyInit_pyaio(void)
+PyInit_core(void)
 {
     return init_pyaio();
 }
 #else
-PyMODINIT_FUNC initpyaio(void) {
+PyMODINIT_FUNC initcore(void) {
     init_pyaio();
 }
 #endif
