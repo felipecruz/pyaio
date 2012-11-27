@@ -33,8 +33,9 @@ static int _async_callback(void *arg)
     if (buffer == NULL) {
         if (aio_return(cb) > 0) {
             read_size = aio_return(cb);
+        }
         /* Realloc Read Buffer to free unused bytes */
-        cb->aio_buf = realloc(cb->aio_buf, read_size)
+        cb->aio_buf = realloc((void *)cb->aio_buf, read_size);
 
         /* Make a bytearray */
         buffer = PyByteArray_FromStringAndSize((const char *)cb->aio_buf,
