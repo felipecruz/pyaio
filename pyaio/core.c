@@ -25,7 +25,6 @@ static int _async_callback(void *arg)
     struct aiocb *cb;
     PyObject *callback, *args, *result, *buffer;
     Py_ssize_t read_size = 0;
-    Py_buffer pbuf;
 
     cb = aio->cb;
     callback = aio->callback;
@@ -34,12 +33,18 @@ static int _async_callback(void *arg)
     if (buffer == NULL) {
         if (aio_return(cb) > 0) {
             read_size = aio_return(cb);
-        }
+        /* Realloc Read Buffer to free unused bytes */
+        cb->aio_buf = realloc(cb->aio_buf, read_size)
+
+        /* Make a bytearray */
+        buffer = PyByteArray_FromStringAndSize((const char *)cb->aio_buf,
+                                                read_size);
+        Py_XINCREF(buffer);
         /* Create a return buffer */
-        PyBuffer_FillInfo(&pbuf, 0, (void *)cb->aio_buf, read_size, 0,
-                            PyBUF_CONTIG);
-        args = Py_BuildValue("(Nni)", PyMemoryView_FromBuffer(&pbuf),
-                             aio_return(cb), aio_error(cb));
+
+        args = Py_BuildValue("(Nni)",
+                        PyMemoryView_FromObject(buffer),
+                        aio_return(cb), aio_error(cb));
     }
     else { /* WRITE */
         args = Py_BuildValue("(ni)", aio_return(cb), aio_error(cb));
@@ -53,9 +58,7 @@ static int _async_callback(void *arg)
     Py_XDECREF(result);
     Py_XDECREF(callback);
     Py_XDECREF(args);
-    if (buffer != NULL) {
-        Py_XDECREF(buffer);
-    }
+    Py_XDECREF(buffer);
     free((struct aiocb *)cb);
     free(aio);
     return 0;
