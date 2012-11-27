@@ -1,7 +1,9 @@
 from __future__ import absolute_import
 import os
 import pyaio
+import gevent
 from gevent.event import AsyncResult
+from gevent.coros import RLock
 
 class aioFile(object):
     """a buffered File like object that uses pyaio and gevent"""
@@ -9,11 +11,14 @@ class aioFile(object):
         modes = os.O_LARGEFILE | os.O_CREAT
         self._offset = 0
         self._buffer_size = buffer
+        if buffer:
+            self._buffer_lock = RLock()
         self._read = False
         self._write = False
         self._read_buf = None
         self._write_buf = None
         self._eof = False   # Optimization to limit calls
+        self._append = False   # Append Mode writes ignore offset
 
         if mode.startswith('r') or '+' in mode:
             self._read = True
@@ -30,9 +35,10 @@ class aioFile(object):
                 modes |= os.O_WRONLY
         if '+' in mode:
             modes |= os.O_RDWR
-        self._fd = os.open(filename, modes)
         if mode.startswith('a'):
-            self.seek(0, os.SEEK_END)  # Append so goto end
+            modes |= os.O_APPEND
+            self._append = True
+        self._fd = os.open(filename, modes)
 
     def _clear_read_buf(self):
         if self._read:
@@ -70,7 +76,8 @@ class aioFile(object):
             raise OSError(14, 'File Position invalid, less than 0')
         #Even if the pos didn't change fix the buffers and EOF
         self._clear_read_buf()
-        self.flush()
+        if not self._append:   # DON'T FLUSH on seek with append
+            self.flush()
         self._offset = offset
         return offset
 
@@ -95,30 +102,51 @@ class aioFile(object):
         """write a buffer object to file"""
         if not self._write:
             raise IOError(9, 'Bad file descriptor')
-        if self._buffer_size and self._read_buf:  # We should clear read cache
+        if not self._append and self._buffer_size and self._read_buf:
+                # We should clear read cache
             self._clear_read_buf()
         if offset is None:
             offset = self._offset
         write_size = self._buffer_size
         if not self._buffer_size and buf:
             write_size = len(buf)
-        if offset != self._offset:
+        if not self._append and offset != self._offset:
             self.seek(offset)  # Makes sure we write our buffer
-        if buf:
-            self._write_buf.extend(buf)
-        while len(self._write_buf) >= self._buffer_size \
-                or (self._flush and self._write_buf):
+
+        #If we buffer we use the global buffer if not we use a local buffer
+        if self._buffer_size:
+            lbuf = self._write_buf
+            self._buffer_lock.acquire()
+            if buf:
+                                          # The a memoryview of the buffer
+                    lbuf.extend(buf)      # pushed to pyaio so we need to lock
+        else:
+            lbuf = buf
+
+        while lbuf and len(lbuf) >= self._buffer_size \
+                or (self._flush and lbuf):
             result = AsyncResult()
             def _write_results(rcode, errno):
                 result.set((rcode, errno))
-            pyaio.aio_write(self._fd, memoryview(self._write_buf)[0:write_size],
+            pyaio.aio_write(self._fd, memoryview(lbuf)[0:write_size],
                             offset, _write_results)
-            rcode, errno = result.get()  # gevent yield
+            #WARNING THIS IS A DIRTY DIRTY TRICK
+            def _no_op():
+                pass
+            #100 micro Seconds In the Future to be exact
+            gevent.spawn_later(0.0001, _no_op);  # WAKE THE EVENT LOOP
+            rcode, errno = result.get()  #SLEEP
+
             if rcode < 0:   # Some kind of error
                 raise IOError(errno, 'AIO Write Error %d' % errno)
             # Clean up buffer (of actually written bytes)
-            del self._write_buf[0:rcode]
+            if self._buffer_size:
+                del lbuf[0:rcode]
+            else:
+                lbuf = None
             self._offset = offset = offset + rcode  # Move the file offset
+        if self._buffer_size:
+            self._buffer_lock.release()
         if buf:
             return len(buf)
         else:
@@ -129,7 +157,7 @@ class aioFile(object):
         """for speed we assume EOF after first short read"""
         if not self._read:
             raise IOError(9, 'Bad file descriptor')
-        if self._buffer_size and self._write_buf:
+        if not self._append and self._buffer_size and self._write_buf:
             self.flush()
         if offset is None:
             offset = self._offset
@@ -138,7 +166,7 @@ class aioFile(object):
         if size == 0:  # Attempt to read entire file and return in a single return
             return self._read_file()
         else:
-            rbuf = bytearray()
+            rbuf = bytearray()  # Holding Place for multiple reads
             while len(rbuf) < size:  # People get what they ask for
                 # If we don't want to buffer then just read what they want
                 if len(self._read_buf) < size - len(rbuf) and not self._eof:
@@ -150,19 +178,28 @@ class aioFile(object):
                     if self._buffer_size:   # If we buffer read buffer instead
                         read_size = self._buffer_size
                     pyaio.aio_read(self._fd, offset, read_size, _read_results)
-                    buf, rcode, errno = result.get()  #gevent YIELD :)
+                    #WARNING THIS IS A DIRTY DIRTY TRICK
+                    def _no_op():
+                        pass
+                    #100 micro Seconds In the Future to be exact
+                    gevent.spawn_later(0.0001, _no_op);  # WAKE THE EVENT LOOP
+                    buf, rcode, errno = result.get()  #SLEEP
                     if rcode < 0:  # Some kind of error
                         raise IOError(errno, 'AIO Read Error %d' % errno)
                     #Rcode will be the bytes read so lets push the offset
                     self._offset = offset = offset + rcode
-                    self._read_buf.extend(buf)
+                    if self._buffer_size:
+                        self._read_buf.extend(buf)
+                    else:
+                        rbuf = buf  # Pass through because we are not buffering
                     if rcode == 0 or rcode < read_size:  # Good Enough
                         self._eof = True
                 #Do a buffer read
                 toread = size - len(rbuf)
-                rbuf.extend(memoryview(self._read_buf)[0:toread])
-                #Clean up read buffer
-                del self._read_buf[0:toread]
+                if self._buffer_size:
+                    rbuf.extend(memoryview(self._read_buf)[0:toread])
+                    #Clean up read buffer
+                    del self._read_buf[0:toread]
                 if not self._read_buf and self._eof:  # Empty buffer and eof
                     break
             if self._eof and not rbuf:
