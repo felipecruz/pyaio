@@ -4,6 +4,10 @@ Python Asynchronous I/O bindings (aio.h)
 Version 0.3
 **Linux only**
 
+You should wait for the callback to finish before queuing more requests in
+a tight loop. Or pyaio could hang against python pending queue length
+
+
 Reading
 -------
 
