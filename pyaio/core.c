@@ -19,14 +19,18 @@ PyDoc_STRVAR(pyaio_read_doc,
 PyDoc_STRVAR(pyaio_write_doc,
         "aio_write(fileno, buffer, offset, callback)\n");
 
-static int _async_callback(void *arg)
+static void aio_completion_handler(sigval_t sigval)
 {
-    Pyaio_cb *aio = (Pyaio_cb *)arg;
+    Pyaio_cb *aio;
+    int tries = 1;
     struct aiocb *cb;
     PyObject *callback, *args, *result, *buffer;
     Py_ssize_t read_size = 0;
     Py_buffer pbuf;
 
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    aio = (Pyaio_cb*) sigval.sival_ptr;
     cb = aio->cb;
     callback = aio->callback;
     buffer = aio->buffer;
@@ -39,7 +43,7 @@ static int _async_callback(void *arg)
         PyBuffer_FillInfo(&pbuf, 0, (void *)cb->aio_buf, read_size, 0,
                             PyBUF_CONTIG);
         args = Py_BuildValue("(Nni)", PyMemoryView_FromBuffer(&pbuf),
-                             aio_return(cb), aio_error(cb));
+                             read_size, aio_error(cb));
     }
     else { /* WRITE */
         args = Py_BuildValue("(ni)", aio_return(cb), aio_error(cb));
@@ -58,21 +62,8 @@ static int _async_callback(void *arg)
     }
     free((struct aiocb *)cb);
     free(aio);
-    return 0;
-}
 
-static void aio_completion_handler(sigval_t sigval)
-{
-    Pyaio_cb *aio;
-    int tries = 1;
-    aio = (Pyaio_cb*) sigval.sival_ptr;
-
-    //We should set an upper limit like 50 retries or something
-    while(Py_AddPendingCall(&_async_callback, aio) < 0) {
-        usleep(500*(tries/2)); //Step off timer
-        tries += 1;
-    }
-
+    PyGILState_Release(gstate);
     return;
 }
 
