@@ -21,48 +21,7 @@ PyDoc_STRVAR(pyaio_write_doc,
 
 static void aio_completion_handler(sigval_t sigval)
 {
-    Pyaio_cb *aio;
-    int tries = 1;
-    struct aiocb *cb;
-    PyObject *callback, *args, *result, *buffer;
-    Py_ssize_t read_size = 0;
-    Py_buffer pbuf;
-
     PyGILState_STATE gstate = PyGILState_Ensure();
-
-    aio = (Pyaio_cb*) sigval.sival_ptr;
-    cb = aio->cb;
-    callback = aio->callback;
-    buffer = aio->buffer;
-
-    if (buffer == NULL) {
-        if (aio_return(cb) > 0) {
-            read_size = aio_return(cb);
-        }
-        /* Create a return buffer */
-        PyBuffer_FillInfo(&pbuf, 0, (void *)cb->aio_buf, read_size, 0,
-                            PyBUF_CONTIG);
-        args = Py_BuildValue("(Nni)", PyMemoryView_FromBuffer(&pbuf),
-                             read_size, aio_error(cb));
-    }
-    else { /* WRITE */
-        args = Py_BuildValue("(ni)", aio_return(cb), aio_error(cb));
-    }
-    Py_XINCREF(args);
-    result = PyObject_CallObject(callback, args);
-    if (result == NULL) {
-        printf("Exception in aio callback, dying!\n");
-        kill(getpid(), SIGKILL);  // DIE FAST
-    }
-    Py_XDECREF(result);
-    Py_XDECREF(callback);
-    Py_XDECREF(args);
-    if (buffer != NULL) {
-        Py_XDECREF(buffer);
-    }
-    free((struct aiocb *)cb);
-    free(aio);
-
     PyGILState_Release(gstate);
     return;
 }
