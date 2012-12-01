@@ -9,7 +9,7 @@ class hax(object):
 def test_aio_read():
     s = hax()
     def callback(buf, rt, er):
-        assert buf == "#define PY_SSIZE_T_CLEAN"
+        assert buf == b"#define PY_SSIZE_T_CLEAN"
         assert rt == len(buf)
         assert er == 0
         s.x -= 1
@@ -24,7 +24,7 @@ def test_aio_read():
 def test_aio_read_stress():
     s = hax()
     def callback(buf, rt, er):
-        assert buf == "#define PY_SSIZE_T_CLEAN"
+        assert buf == b"#define PY_SSIZE_T_CLEAN"
         assert rt == len(buf)
         assert er == 0
         s.x -= 1
@@ -44,14 +44,14 @@ def test_aio_write():
     def callback2(rt, er):
         assert rt == 10
         assert er == 0
-        f = file('/tmp/c.txt', 'r')
+        f = open('/tmp/c.txt', 'r')
         content = f.read()
         assert content == "pyaiopyaio"
         s.x -= 1
 
     fileno = os.open('/tmp/c.txt', os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
     s.x += 1
-    ret = pyaio.aio_write(fileno, "pyaiopyaio", 0, callback2)
+    ret = pyaio.aio_write(fileno, b"pyaiopyaio", 0, callback2)
     assert ret == 0
 
     while(s.x != 0):
@@ -78,7 +78,7 @@ def test_aio_write_read_stress():
     for x in range(1000):
         s.x += 1
         ret = pyaio.aio_write(fileno,
-                              "pyaiopyaio", x * 10, callback2)
+                              b"pyaiopyaio", x * 10, callback2)
         assert ret == 0
         time.sleep(0.0001)
         s.x += 1
@@ -90,10 +90,10 @@ def test_aio_write_read_stress():
 
 def run(method):
     ts = time.time()
-    print "Running %s" % method.__name__
+    print("Running %s" % method.__name__)
     method()
-    print "Passed!"
-    print "Total Time (%.2f)." % (time.time() - ts)
+    print("Passed!")
+    print("Total Time (%.2f)." % (time.time() - ts))
 
 if __name__ == '__main__':
     run(test_aio_read)
