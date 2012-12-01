@@ -1,9 +1,6 @@
 from distutils.core import setup, Extension
 import sys
 
-if sys.version < '2.7':
-    print "pyaio requires python of at least version 2.7 to build correctly"
-
 version = '0.3'
 
 pyaiocore = \

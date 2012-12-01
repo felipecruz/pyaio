@@ -67,17 +67,14 @@ static int _async_callback(void *arg)
 static void aio_completion_handler(sigval_t sigval)
 {
     Pyaio_cb *aio;
-    int tries = 1;
     aio = (Pyaio_cb*) sigval.sival_ptr;
 
-    //should set an upper limit like 50 retries or something
-    //while(Py_AddPendingCall(&_async_callback, aio) < 0) {
-    //    usleep(500*(tries/2)); //Step off timer
-    //    tries += 1;
-    //}
-    PyGILState_STATE state = PyGILState_Ensure();
+    /* Hybrid Approach if Pending fails grab GIL do it directly */
+    if(Py_AddPendingCall(&_async_callback, aio) < 0) {
+        PyGILState_STATE state = PyGILState_Ensure();
         _async_callback(aio);
-    PyGILState_Release(state);
+        PyGILState_Release(state);
+    }
 
     return;
 }
@@ -197,7 +194,6 @@ pyaio_write(PyObject *dummy, PyObject *args) {
     }
 }
 
-
 static PyMethodDef PyaioMethods[] = {
 
         { "aio_read", pyaio_read,
@@ -226,8 +222,9 @@ PyObject *
 init_pyaio(void) {
     PyObject *m;
     PyObject *__version__;
-    PyEval_InitThreads();
 
+    /* We will be using threads */
+    PyEval_InitThreads();
 #if PY_MAJOR_VERSION >= 3
     __version__ = PyUnicode_FromFormat("%s", PYAIO_VERSION);
 #else
