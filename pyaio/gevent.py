@@ -5,6 +5,10 @@ import gevent
 from gevent.event import AsyncResult
 from gevent.coros import RLock
 
+def _keep_awake():
+    while True:
+        gevent.sleep(0.001)
+
 class aioFile(object):
     """a buffered File like object that uses pyaio and gevent"""
     def __init__(self, filename, mode='r', buffer=16<<10):
@@ -19,7 +23,7 @@ class aioFile(object):
         self._write_buf = None
         self._eof = False   # Optimization to limit calls
         self._append = False   # Append Mode writes ignore offset
-
+        self._stay_alive = gevent.spawn(_keep_awake);
         if mode.startswith('r') or '+' in mode:
             self._read = True
             self._read_buf = bytearray()
@@ -54,6 +58,7 @@ class aioFile(object):
     def close(self):
         self.flush()
         os.close(self._fd)
+        self._stay_alive.kill()
 
     def stat(self):
         return os.fstat(self._fd)
@@ -130,11 +135,6 @@ class aioFile(object):
                 result.set((rcode, errno))
             pyaio.aio_write(self._fd, memoryview(lbuf)[0:write_size],
                             offset, _write_results)
-            #WARNING THIS IS A DIRTY DIRTY TRICK
-            def _no_op():
-                pass
-            #100 micro Seconds In the Future to be exact
-            gevent.spawn_later(0.0001, _no_op);  # WAKE THE EVENT LOOP
             rcode, errno = result.get()  #SLEEP
 
             if rcode < 0:   # Some kind of error
@@ -178,11 +178,6 @@ class aioFile(object):
                     if self._buffer_size:   # If we buffer read buffer instead
                         read_size = self._buffer_size
                     pyaio.aio_read(self._fd, offset, read_size, _read_results)
-                    #WARNING THIS IS A DIRTY DIRTY TRICK
-                    def _no_op():
-                        pass
-                    #100 micro Seconds In the Future to be exact
-                    gevent.spawn_later(0.0001, _no_op);  # WAKE THE EVENT LOOP
                     buf, rcode, errno = result.get()  #SLEEP
                     if rcode < 0:  # Some kind of error
                         raise IOError(errno, 'AIO Read Error %d' % errno)
