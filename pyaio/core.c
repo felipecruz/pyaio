@@ -22,6 +22,10 @@ PyDoc_STRVAR(pyaio_read_doc,
 PyDoc_STRVAR(pyaio_write_doc,
         "aio_write(fileno, buffer, offset, callback)\n");
 
+PyDoc_STRVAR(pyaio_init_doc,
+        "aio_init(max_threads, max_queue_size, max_thread_idle_time)\n");
+
+
 static int _async_callback(void *arg)
 {
     Pyaio_cb *aio = (Pyaio_cb *)arg;
@@ -78,6 +82,26 @@ static void aio_completion_handler(sigval_t sigval)
 
     return;
 }
+
+static PyObject *
+pyaio_init(PyObject *dummy, PyObject *args) {
+    struct aioinit *init;
+    int aio_threads, aio_num, aio_idle_time;
+
+    Py_XINCREF(args);
+    if (PyArg_ParseTuple(args, "iii", &aio_threads, &aio_num, &aio_idle_time)) {
+        init = malloc(sizeof(struct aioinit));
+        init->aio_threads = aio_threads;
+        init->aio_num = aio_num;
+        init->aio_idle_time = aio_idle_time;
+        aio_init(init);
+        free(init);
+    }
+    Py_XDECREF(args);
+    Py_XINCREF(Py_None);
+    return Py_None;
+}
+
 
 static PyObject *
 pyaio_read(PyObject *dummy, PyObject *args) {
@@ -201,6 +225,9 @@ static PyMethodDef PyaioMethods[] = {
 
         { "aio_write", pyaio_write,
         METH_VARARGS, pyaio_write_doc },
+
+        { "aio_init", pyaio_init,
+        METH_VARARGS, pyaio_init_doc },
 
         { NULL, NULL, 0, NULL }
 };
