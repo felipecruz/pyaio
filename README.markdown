@@ -5,8 +5,15 @@ Version 0.3
 **Linux only**
 
 You should wait for the callback to finish before queuing more requests in
-a tight loop. Or pyaio could hang against python pending queue length
+a tight loop. pyaio could hang if you hit the max aio queue size.
 
+Tuning
+-------
+
+pyaio.aio_init(max threads, max aio queue, max thread sleep time)
+
+Linux Defaults to 20 threads and 64 queue size.
+Pyaio will use 5*cores and 4*threads instead of those values if larger.
 
 Reading
 -------
