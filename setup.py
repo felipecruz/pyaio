@@ -4,7 +4,7 @@ import sys
 if sys.version < '2.7' and not sys.version[0] == "3":
     print("pyaio requires python of at least version 2.7 to build correctly")
 
-version = '0.3'
+version = '0.4'
 
 pyaiocore = \
     Extension('pyaio.core',
