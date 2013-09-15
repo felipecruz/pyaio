@@ -91,6 +91,8 @@ pyaio_init(PyObject *dummy, PyObject *args) {
     Py_XINCREF(args);
     if (PyArg_ParseTuple(args, "iii", &aio_threads, &aio_num, &aio_idle_time)) {
         init = malloc(sizeof(struct aioinit));
+        if (!init)
+            return PyErr_NoMemory();
         init->aio_threads = aio_threads;
         init->aio_num = aio_num;
         init->aio_idle_time = aio_idle_time;
@@ -124,9 +126,13 @@ pyaio_read(PyObject *dummy, PyObject *args) {
     }
     Py_XDECREF(args);
     aio = malloc(sizeof(Pyaio_cb));
+    if (!aio)
+        return PyErr_NoMemory();
     buffer_view = &(aio->buffer_view);
 
     aio->cb = malloc(sizeof(struct aiocb));
+    if (!aio->cb)
+        return PyErr_NoMemory();
     bzero((char *) aio->cb, sizeof(struct aiocb));
 
     /* Empty ByteArray of the requested read size INCREF*/
