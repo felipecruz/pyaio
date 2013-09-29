@@ -88,6 +88,24 @@ def test_aio_write_read_stress():
     while(s.x != 0):
         time.sleep(0.05)
 
+def test_tulip_aio_read():
+    import tulip
+    from pyaio.tulip import aio_read
+
+    filename = './pyaio/core.c'
+    data = None
+
+    @tulip.coroutine
+    def use_aio_read():
+        nonlocal data
+        data, _, _ = yield from aio_read(filename, file_size=24)
+        assert data == b"#define PY_SSIZE_T_CLEAN"
+
+    loop = tulip.get_event_loop()
+    loop.run_until_complete(use_aio_read())
+    assert data == b"#define PY_SSIZE_T_CLEAN"
+
+
 def run(method):
     ts = time.time()
     print("Running %s" % method.__name__)
@@ -96,7 +114,8 @@ def run(method):
     print("Total Time (%.2f)." % (time.time() - ts))
 
 if __name__ == '__main__':
-    run(test_aio_read)
-    run(test_aio_write)
-    run(test_aio_read_stress)
-    run(test_aio_write_read_stress)
+    run(test_tulip_aio_read)
+    #run(test_aio_read)
+    #run(test_aio_write)
+    #run(test_aio_read_stress)
+    #run(test_aio_write_read_stress)

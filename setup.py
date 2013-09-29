@@ -26,6 +26,7 @@ setup(
                     'License :: OSI Approved :: BSD License'
                     ],
     ext_modules = [pyaiocore],
-    py_modules = ['pyaio.gevent'])
+    py_modules = ['pyaio.gevent',
+                  'pyaio.tulip'])
 
 
