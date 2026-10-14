@@ -19,8 +19,8 @@ jobs:
         os: [ubuntu-22.04, ubuntu-24.04]
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Show kernel and io_uring policy
@@ -38,8 +38,8 @@ jobs:
     name: ASan + UBSan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: tools/install-liburing.sh
@@ -63,7 +63,7 @@ jobs:
     name: Fallback under Docker's default seccomp profile
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test in a container that blocks io_uring
         run: |
           docker run --rm -v "$PWD:/src" -e PYAIO_EXPECT_FALLBACK=1 python:3.13 sh -c '
@@ -76,8 +76,8 @@ jobs:
     name: Build and check distributions
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: tools/install-liburing.sh

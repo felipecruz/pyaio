@@ -486,14 +486,19 @@ def test_fallback_is_logged(monkeypatch, caplog):
     assert 'io_uring unavailable' in caplog.text
 
 
-def test_import_does_not_load_legacy_core():
+def test_import_does_not_load_legacy_core(tmp_path):
     import subprocess
+    import pyaio
     code = ('import sys, pyaio.uring; '
             'assert "pyaio.core" not in sys.modules; '
             'import pyaio; pyaio.aio_read; '
             'assert "pyaio.core" in sys.modules')
-    subprocess.run([sys.executable, '-c', code], check=True,
-                   cwd=os.path.dirname(os.path.dirname(__file__)))
+    # Import the same pyaio this test process uses (installed or built in
+    # place), not whatever a source checkout in the cwd would shadow it with.
+    env = dict(os.environ,
+               PYTHONPATH=os.path.dirname(os.path.dirname(pyaio.__file__)))
+    subprocess.run([sys.executable, '-c', code], check=True, cwd=tmp_path,
+                   env=env)
 
 
 def test_environment_expectations():
