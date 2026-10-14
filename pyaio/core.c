@@ -16,14 +16,18 @@ typedef struct py_aio_callback {
     int8_t read;
 } Pyaio_cb;
 
+#define DEPRECATED_NOTE \
+    "\nDeprecated since pyaio 0.5, removed in 0.6: use pyaio.uring.UringIO.\n"
+
 PyDoc_STRVAR(pyaio_read_doc,
-        "aio_read(fileno, offset, len, callback)\n");
+        "aio_read(fileno, offset, len, callback)\n" DEPRECATED_NOTE);
 
 PyDoc_STRVAR(pyaio_write_doc,
-        "aio_write(fileno, buffer, offset, callback)\n");
+        "aio_write(fileno, buffer, offset, callback)\n" DEPRECATED_NOTE);
 
 PyDoc_STRVAR(pyaio_init_doc,
-        "aio_init(max_threads, max_queue_size, max_thread_idle_time)\n");
+        "aio_init(max_threads, max_queue_size, max_thread_idle_time)\n"
+        DEPRECATED_NOTE);
 
 
 static void
@@ -276,6 +280,14 @@ init_pyaio(void) {
 
     if (PyModule_AddObject(m, "__version__", __version__)) {
         Py_DECREF(__version__);
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                     "pyaio.core (the POSIX AIO callback API) is deprecated "
+                     "and will be removed in pyaio 0.6; use "
+                     "pyaio.uring.UringIO", 1) < 0) {
         Py_DECREF(m);
         return NULL;
     }

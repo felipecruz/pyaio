@@ -1,7 +1,12 @@
 import pyaio
+import pytest
 import tempfile
 import time
 import os
+
+# The whole legacy API is deprecated; these tests exercise it on purpose.
+pytestmark = pytest.mark.filterwarnings(
+    'ignore:pyaio.*POSIX AIO callback API:DeprecationWarning')
 
 # Read this file itself, so the tests work from any directory.
 SOURCE = os.path.abspath(__file__)
@@ -141,8 +146,19 @@ def test_callback_exception_does_not_kill_process():
         sys.unraisablehook = old_hook
     assert isinstance(seen[0], ValueError)
 
+def test_legacy_api_is_deprecated():
+    for name in ('aio_read', 'aio_write', 'aio_init'):
+        with pytest.warns(DeprecationWarning, match='removed in pyaio 0.6') as w:
+            getattr(pyaio, name)
+        assert w[0].filename == __file__   # points at the caller
+    assert 'Deprecated since pyaio 0.5' in pyaio.aio_read.__doc__
+
+def test_uring_import_does_not_warn():
+    import subprocess, sys
+    subprocess.run([sys.executable, '-W', 'error::DeprecationWarning', '-c',
+                    'import pyaio, pyaio.uring'], check=True)
+
 def test_bad_arguments_raise():
-    import pytest
     with pytest.raises(TypeError):
         pyaio.aio_read('not an fd', 0, 10, lambda *a: None)
     with pytest.raises(TypeError):

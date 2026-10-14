@@ -43,12 +43,11 @@ jobs:
         with:
           python-version: "3.13"
       - run: tools/install-liburing.sh
-      - run: python -m pip install setuptools pytest
-      - name: Build with sanitizers
+      - name: Build with sanitizers (editable install, extensions in place)
         env:
           CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
           LDFLAGS: -fsanitize=address,undefined
-        run: python setup.py build_ext --inplace
+        run: python -m pip install -e . pytest
       - name: Test
         env:
           ASAN_OPTIONS: detect_leaks=0

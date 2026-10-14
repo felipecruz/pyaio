@@ -185,6 +185,8 @@ flowchart TD
 
 ## 8. The legacy POSIX AIO path
 
+> **Deprecated since 0.5, removed in 0.6.** Kept here for comparison.
+
 For comparison, this is what `pyaio.aio_read` does. glibc implements POSIX
 AIO in user space: a pool of threads performs ordinary blocking calls.
 
@@ -212,7 +214,7 @@ notification thread and the pending-call hop.
 |---|---|
 | `pyaio/_uring.c` | `Ring`: slot table, SQE/CQE handling, cancellation, shutdown, fork detection, kernel check |
 | `pyaio/uring.py` | `UringIO`: asyncio integration |
-| `pyaio/core.c` | legacy POSIX AIO bindings |
+| `pyaio/core.c` | legacy POSIX AIO bindings (deprecated, removed in 0.6) |
 | `pyaio/__init__.py` | version, lazy loading of the legacy API |
 | `tests/test_uring.py` | io_uring tests, including the failure modes above |
 | `tests/test_pyaio.py` | legacy API tests |

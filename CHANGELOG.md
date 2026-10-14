@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.0rc2 (2026-10-15)
+
+### Deprecated
+
+- The POSIX AIO callback API (`pyaio.aio_read`, `aio_write`, `aio_init` and
+  `pyaio.core`) now emits `DeprecationWarning` and will be removed in 0.6.
+  Use `pyaio.uring.UringIO`; the README shows how to migrate.
+
+### Changed
+
+- The README renders correctly on PyPI: absolute links, no GitHub-only
+  syntax (the diagrams stay in `docs/architecture.md`).
+- Development builds use `pip install -e .`, not the deprecated
+  `python setup.py build_ext`.
 
 ### Fixed
 

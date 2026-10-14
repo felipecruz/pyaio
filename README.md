@@ -5,26 +5,16 @@ pyaio gives asyncio programs file reads, writes and fsyncs that don't block
 the event loop, backed by **io_uring**. It also still ships the original
 callback API on glibc POSIX AIO.
 
-> [!WARNING]
-> **Learning project, alpha quality.** pyaio is a small, readable example of
+> **Warning: learning project, alpha quality.** pyaio is a small, readable example of
 > integrating io_uring with asyncio. It has not been audited, targets current
 > kernels only, and its API may change.
 >
-> **io_uring has a long record of kernel security vulnerabilities.** Many
+> **Warning: io_uring has a long record of kernel security vulnerabilities.** Many
 > container runtimes and hardened systems disable it, and it can hide I/O from
-> syscall-based security monitoring. Read [SECURITY.md](SECURITY.md) before
+> syscall-based security monitoring. Read [SECURITY.md](https://github.com/felipecruz/pyaio/blob/main/SECURITY.md) before
 > enabling it on a machine you share or care about.
 
-```mermaid
-flowchart LR
-    A["await io.read()"] --> B["UringIO<br/>(asyncio)"]
-    B --> C["Ring<br/>(C, liburing)"]
-    C <-->|"submission and<br/>completion queues"| K["Linux kernel<br/>io_uring"]
-    K -->|"eventfd"| L["event loop"]
-    L -->|"results"| B
-```
-
-How it works, with diagrams: [docs/architecture.md](docs/architecture.md).
+How it works, with diagrams: [docs/architecture.md](https://github.com/felipecruz/pyaio/blob/main/docs/architecture.md).
 
 Requirements
 ------------
@@ -55,8 +45,8 @@ pip install --pre pyaio      # release candidates need --pre
 
 Wheels for x86_64 and aarch64 bundle liburing, so nothing else is needed.
 To build from source instead, install the liburing headers first
-(`tools/install-liburing.sh` builds the pinned version) and run
-`pip install .`.
+([`tools/install-liburing.sh`](https://github.com/felipecruz/pyaio/blob/main/tools/install-liburing.sh) builds the
+pinned version) and run `pip install .`.
 
 Quick start
 -----------
@@ -125,12 +115,19 @@ Limitations
 * CI covers Python 3.10 to 3.14 on Linux 6.8 and 6.17 (GitHub's Ubuntu
   runners) with liburing 2.15.
 
-Legacy POSIX AIO API
---------------------
+Legacy POSIX AIO API (deprecated)
+---------------------------------
 
-The original callback API is still available. It uses glibc's POSIX AIO,
-which runs blocking I/O on a user-space thread pool (see the
-[comparison](docs/architecture.md#8-the-legacy-posix-aio-path)). It is
+> **Deprecated since 0.5, removed in 0.6.** `pyaio.aio_read`, `aio_write`
+> and `aio_init` emit a `DeprecationWarning`. Move to `pyaio.uring.UringIO`:
+> `aio_read(fd, offset, n, callback)` becomes `await io.read(fd, offset, n)`
+> and `aio_write(fd, buf, offset, callback)` becomes
+> `await io.write(fd, buf, offset)`. Errors raise `OSError` instead of
+> arriving as an `errno` argument.
+
+The original callback API uses glibc's POSIX AIO, which runs blocking I/O on
+a user-space thread pool (see the
+[comparison](https://github.com/felipecruz/pyaio/blob/main/docs/architecture.md#8-the-legacy-posix-aio-path)). It is
 loaded only when first used.
 
 ```python
@@ -168,15 +165,14 @@ Development
 
 ```sh
 python -m venv .venv && . .venv/bin/activate
-pip install setuptools pytest
-python setup.py build_ext --inplace
+pip install -e . pytest      # builds the C extensions in place
 python -m pytest
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes and
-[RELEASING.md](RELEASING.md) for the release process.
+See [CHANGELOG.md](https://github.com/felipecruz/pyaio/blob/main/CHANGELOG.md) for release notes and
+[RELEASING.md](https://github.com/felipecruz/pyaio/blob/main/RELEASING.md) for the release process.
 
 License
 -------
 
-BSD-3-Clause. See [LICENSE](LICENSE).
+BSD-3-Clause. See [LICENSE](https://github.com/felipecruz/pyaio/blob/main/LICENSE).
