@@ -444,3 +444,37 @@ def test_blocked_io_uring_explains_why(monkeypatch):
         asyncio.run(main())
     assert e.value.errno == errno.EPERM
     assert 'seccomp' in str(e.value) and 'io_uring_disabled' in str(e.value)
+
+
+def test_task_cancel_never_raises_when_kernel_cancel_fails():
+    """Cancelling a task must not raise even if the kernel cancel cannot be
+    queued; the request then just completes and its result is dropped."""
+    r, w = os.pipe()
+
+    class NoCancelRing(_FailingRing):
+        def submit(self):
+            return self._ring.submit()
+
+        def cancel(self, handle):
+            raise BlockingIOError('submission queue is full')
+
+    async def main():
+        io = uring.UringIO()
+        io._ring = NoCancelRing(io._ring)
+        task = asyncio.ensure_future(io.read(r, -1, 10))
+        await asyncio.sleep(0.01)
+        assert task.cancel() is True        # must not raise
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        os.write(w, b'x')                   # let the read finish
+        for _ in range(100):
+            if io.inflight == 0:
+                break
+            await asyncio.sleep(0.001)
+        assert io.inflight == 0
+        await io.aclose()
+
+    asyncio.run(main())
+    os.close(r)
+    os.close(w)
+

@@ -167,9 +167,16 @@ class UringIO(object):
                 self._break(e)
 
     def _cancel_request(self, handle):
+        # Runs inside Future.cancel(), so it must never raise: if the cancel
+        # cannot be queued, the request simply completes and is discarded.
         if self._ring.closed:
             return
-        if self._ring.cancel(handle):
+        try:
+            queued = self._ring.cancel(handle)
+        except Exception as e:
+            logger.debug('could not queue kernel cancel: %s', e)
+            return
+        if queued:
             self._schedule_submit()
 
     # -- completion -------------------------------------------------------

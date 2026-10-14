@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Cancelling a task no longer raises if the kernel cancel cannot be
+  queued (for example when the submission queue is full); the request
+  completes and its result is discarded.
+
+### Security
+
+- The liburing source bundled into wheels is verified against a pinned
+  SHA-256 before building.
+- GitHub Actions are pinned to full commit SHAs, `actions/checkout` no
+  longer leaves the token in `.git/config`, and Dependabot (with a 7-day
+  cooldown) keeps the pins current.
+
 ## 0.5.0rc1 (2026-10-15)
 
 First release candidate of the io_uring backend. pyaio is a learning

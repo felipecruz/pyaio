@@ -1,0 +1,14 @@
+# Keep the commit-pinned GitHub Actions up to date. The cooldown skips
+# releases younger than a week, the window in which a compromised release
+# is usually caught and pulled.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
