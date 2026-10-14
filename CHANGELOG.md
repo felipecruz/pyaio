@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0rc1 (unreleased)
+## 0.5.0rc1 (2026-10-15)
 
 First release candidate of the io_uring backend. pyaio is a learning
 project: see the warnings in the README and [SECURITY.md](SECURITY.md).
