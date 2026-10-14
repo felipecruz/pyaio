@@ -373,9 +373,17 @@ def test_hard_submit_error_fails_futures_instead_of_hanging(path):
         futs = [io.read(fd, 0, 1) for _ in range(5)]   # 2 queued in ring
         results = await asyncio.wait_for(
             asyncio.gather(*futs, return_exceptions=True), 5)
-        assert all(isinstance(r, OSError) and r.errno == errno.EBADF
-                   for r in results)
-        assert len({id(r) for r in results}) == 5   # one instance each
+
+        def failed(r):
+            return isinstance(r, OSError) and r.errno == errno.EBADF
+        # The 2 requests already in the submission queue reach the kernel
+        # when teardown submits its cancels; on a cached file a read may
+        # finish before its cancel (kernel dependent), and its real result
+        # is delivered. Everything else must fail with the submit error.
+        assert all(failed(r) or r == b'0' for r in results[:2])
+        assert all(failed(r) for r in results[2:])     # never submitted
+        errors = [r for r in results if failed(r)]
+        assert len({id(r) for r in errors}) == len(errors)  # one each
         with pytest.raises(OSError):
             io.read(fd, 0, 1)
 
