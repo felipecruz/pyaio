@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Felipe Cruz", email = "felipecruz@loogica.net" },
+    { name = "Felipe Cruz", email = "felipecruz@gmail.com" },
     { name = "Jason Fried", email = "me@jasonfried.info" },
 ]
 keywords = ["io_uring", "aio", "asyncio", "linux", "file io"]
