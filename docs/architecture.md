@@ -4,7 +4,7 @@ pyaio has two independent backends:
 
 | | `pyaio.uring` (new) | `pyaio.aio_read` / `aio_write` (legacy) |
 |---|---|---|
-| Kernel interface | io_uring (Linux 5.6+) | glibc POSIX AIO (`aio.h`) |
+| Kernel interface | io_uring (Linux 6.1+) | glibc POSIX AIO (`aio.h`) |
 | Who does the I/O | the kernel, asynchronously | a glibc **user-space thread pool** running blocking `pread`/`pwrite` |
 | API style | asyncio futures | callbacks |
 | Batching | one syscall per loop iteration | one request at a time |
@@ -140,7 +140,7 @@ internal cancel requests.
 ```mermaid
 flowchart TD
     A["aclose(timeout) or close(timeout)"] --> B["reject new requests,<br/>cancel the backlog"]
-    B --> C["queue ASYNC_CANCEL for<br/>every live handle, submit"]
+    B --> C["queue one ASYNC_CANCEL<br/>matching every request,<br/>submit"]
     C --> D{"all requests<br/>completed?"}
     D -->|yes| F["tear down ring,<br/>close eventfd"]
     D -->|"no, keep waiting"| E{"timeout<br/>expired?"}
@@ -151,8 +151,7 @@ flowchart TD
 
 * `aclose()` waits on the event loop, so other tasks keep running.
   `close()` blocks the calling thread; use it from synchronous code.
-* Cancelling every request one by one (instead of `IORING_ASYNC_CANCEL_ANY`)
-  keeps this working on kernels older than 5.19.
+* A single `IORING_ASYNC_CANCEL_ANY` request cancels everything at once.
 * If the `Ring` is garbage collected while requests are still in flight, it
   runs the same procedure with a 1 second limit.
 
@@ -160,7 +159,8 @@ flowchart TD
 
 | Failure | What pyaio does |
 |---|---|
-| io_uring missing, too old, disabled by sysctl or blocked by seccomp | `open_io()` logs a warning and returns `ThreadIO` (check `.backend`) |
+| Kernel older than 6.1 | `UringIO()` raises `OSError(ENOSYS)` naming the running kernel |
+| io_uring blocked by seccomp or `kernel.io_uring_disabled` | `UringIO()` raises `PermissionError` naming the likely causes |
 | `submit()` fails with `EAGAIN`/`EBUSY`/`EINTR` | retries on the next loop iteration |
 | `submit()` fails with anything else | the ring is closed and **every** pending future fails with that error, so nothing hangs |
 | Out of memory while reaping | the completion stays in the kernel's queue, the eventfd is re-armed, and the next iteration retries |
@@ -168,17 +168,19 @@ flowchart TD
 | `UringIO` called from another thread | `RuntimeError` |
 | `Ring` used in a child after `fork()` | `RuntimeError`; the child never touches the parent's queues |
 
-## 7. Choosing a backend
+## 7. Where it runs
+
+There is deliberately no fallback. Supporting environments where io_uring
+is usually unavailable would mean a second implementation to maintain and
+test, for places pyaio is not meant for.
 
 ```mermaid
 flowchart TD
-    S["open_io()"] --> X{"_uring extension<br/>built? (liburing<br/>present at build time)"}
-    X -->|no| T["ThreadIO<br/>os.pread / os.pwrite<br/>on the default executor"]
-    X -->|yes| Y{"io_uring_setup()<br/>allowed?"}
-    Y -->|"EPERM / ENOSYS<br/>(seccomp, sysctl, old kernel)"| T
-    Y -->|yes| Z{"kernel supports<br/>READ, WRITE, FSYNC,<br/>ASYNC_CANCEL?"}
-    Z -->|no| T
-    Z -->|yes| U["UringIO"]
+    S["UringIO()"] --> V{"Linux 6.1<br/>or newer?"}
+    V -->|no| E1["OSError ENOSYS:<br/>needs Linux 6.1+"]
+    V -->|yes| Y{"io_uring_setup()<br/>allowed?"}
+    Y -->|"EPERM: seccomp<br/>(Docker default) or<br/>io_uring_disabled"| E2["PermissionError<br/>explaining the cause"]
+    Y -->|yes| U["ready"]
 ```
 
 ## 8. The legacy POSIX AIO path
@@ -208,11 +210,12 @@ notification thread and the pending-call hop.
 
 | File | Role |
 |---|---|
-| `pyaio/_uring.c` | `Ring`: slot table, SQE/CQE handling, cancellation, shutdown, fork detection |
-| `pyaio/uring.py` | `UringIO`, `ThreadIO`, `open_io()`: asyncio integration and fallback |
+| `pyaio/_uring.c` | `Ring`: slot table, SQE/CQE handling, cancellation, shutdown, fork detection, kernel check |
+| `pyaio/uring.py` | `UringIO`: asyncio integration |
 | `pyaio/core.c` | legacy POSIX AIO bindings |
 | `pyaio/__init__.py` | version, lazy loading of the legacy API |
-| `tests/test_uring.py` | io_uring and fallback tests, including the failure modes above |
+| `tests/test_uring.py` | io_uring tests, including the failure modes above |
 | `tests/test_pyaio.py` | legacy API tests |
 | `tools/install-liburing.sh` | builds the pinned liburing for CI and wheels |
+| `tools/ci-pytest.sh` | runs pytest in CI and reports results as GitHub annotations |
 | `.github/workflows/` | CI (`ci.yml`) and wheel builds and publishing (`release.yml`) |

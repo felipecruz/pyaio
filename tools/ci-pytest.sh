@@ -13,8 +13,6 @@ except OSError:
     disabled = 'n/a'
 try:
     from pyaio.uring import Ring
-    if Ring is None:
-        raise OSError('pyaio._uring extension not built')
     Ring().close()
     state = 'available'
 except OSError as e:

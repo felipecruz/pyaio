@@ -23,15 +23,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - name: Show kernel and io_uring policy
-        run: uname -r; sysctl kernel.io_uring_disabled || true
       - run: tools/install-liburing.sh
       - run: python -m pip install . pytest
       # Run from tests/ so the installed package is imported, not the tree.
-      - name: Test installed package (io_uring required)
+      - name: Test installed package
         working-directory: tests
-        env:
-          PYAIO_REQUIRE_URING: "1"
         run: ../tools/ci-pytest.sh .
 
   sanitizers:
@@ -51,7 +47,6 @@ jobs:
         run: python setup.py build_ext --inplace
       - name: Test
         env:
-          PYAIO_REQUIRE_URING: "1"
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           PYTHONMALLOC: malloc
@@ -59,18 +54,6 @@ jobs:
           export LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libubsan.so)"
           tools/ci-pytest.sh
 
-  fallback:
-    name: Fallback under Docker's default seccomp profile
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - name: Test in a container that blocks io_uring
-        run: |
-          docker run --rm -v "$PWD:/src" -e PYAIO_EXPECT_FALLBACK=1 python:3.13 sh -c '
-            set -e
-            sh /src/tools/install-liburing.sh
-            pip install -q /src pytest
-            cd /src/tests && python -m pytest -q -rs -p no:cacheprovider .'
 
   package:
     name: Build and check distributions

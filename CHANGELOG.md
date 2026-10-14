@@ -7,9 +7,11 @@ project: see the warnings in the README and [SECURITY.md](SECURITY.md).
 
 ### Added
 
-- `pyaio.uring`: asyncio file I/O on io_uring (`UringIO`), with a thread-pool
-  fallback (`ThreadIO`) and `open_io()` to pick one. Supports `read`, `write`,
-  `write_all` and `fsync`/`fdatasync`.
+- `pyaio.uring`: asyncio file I/O on io_uring (`UringIO`). Supports `read`,
+  `write`, `write_all` and `fsync`/`fdatasync`. Requires Linux 6.1+ with
+  io_uring allowed. There is deliberately no fallback: where io_uring is
+  blocked or the kernel is too old, `UringIO()` raises `OSError` explaining
+  why.
 - Requests issued in the same event loop iteration are submitted with a
   single system call.
 - Cancelling an awaiting task cancels the kernel request.
@@ -18,8 +20,6 @@ project: see the warnings in the README and [SECURITY.md](SECURITY.md).
 - `aclose()`/`close()` with an optional timeout. Requests that outlive it are
   abandoned safely: their buffers are leaked and a `ResourceWarning` is
   emitted, rather than freeing memory the kernel may still write to.
-- Kernel feature probing at startup. Kernels without the needed opcodes fall
-  back to threads.
 - Detection of `fork()`: a ring is unusable in the child, and the parent's
   ring is unaffected.
 - Documentation: `docs/architecture.md` (with diagrams), `SECURITY.md`,
@@ -28,13 +28,15 @@ project: see the warnings in the README and [SECURITY.md](SECURITY.md).
   itself BSD-licensed but never said which variant or shipped the text.
 - manylinux wheels for x86_64 and aarch64 (CPython 3.10 to 3.14) with
   liburing 2.15 bundled, built by cibuildwheel.
-- GitHub Actions CI: Python 3.10 to 3.14 on two Ubuntu releases, an
-  AddressSanitizer/UBSan job, and a job that checks the fallback when
-  Docker's seccomp profile blocks io_uring.
+- GitHub Actions CI: Python 3.10 to 3.14 on two Ubuntu releases (Linux 6.8
+  and 6.17) and an AddressSanitizer/UBSan job. Wheels are built and tested
+  with io_uring on every change to the C code or packaging.
 
 ### Changed
 
 - Requires Python 3.10+. Python 2 support is gone.
+- Building now requires liburing (2.2+); the io_uring extension is no
+  longer optional.
 - The build uses setuptools and `pyproject.toml`, since distutils was
   removed in Python 3.12.
 - `import pyaio` no longer loads the POSIX AIO extension or calls

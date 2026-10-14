@@ -24,10 +24,12 @@
 #include <Python.h>
 #include <liburing.h>
 #include <sys/eventfd.h>
+#include <sys/utsname.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -222,7 +224,7 @@ ring_get_sqe(RingObject *self)
     return sqe;
 }
 
-/* Queue an IORING_OP_ASYNC_CANCEL for one request (kernel 5.5+). */
+/* Queue an IORING_OP_ASYNC_CANCEL for one request. */
 static int
 ring_queue_cancel(RingObject *self, Request *req)
 {
@@ -231,6 +233,19 @@ ring_queue_cancel(RingObject *self, Request *req)
     if (!sqe)
         return -1;
     io_uring_prep_cancel64(sqe, request_handle(req), 0);
+    io_uring_sqe_set_data64(sqe, 0);
+    return 0;
+}
+
+/* Queue one IORING_OP_ASYNC_CANCEL matching every request (kernel 5.19+). */
+static int
+ring_queue_cancel_all(RingObject *self)
+{
+    struct io_uring_sqe *sqe = ring_get_sqe(self);
+
+    if (!sqe)
+        return -1;
+    io_uring_prep_cancel64(sqe, 0, IORING_ASYNC_CANCEL_ANY);
     io_uring_sqe_set_data64(sqe, 0);
     return 0;
 }
@@ -276,12 +291,8 @@ ring_shutdown(RingObject *self, PyObject *collect, int64_t timeout_ns,
     }
 
     if (self->inflight > 0) {
-        for (i = 0; i < self->nslots; i++) {
-            if (self->slots[i] && ring_queue_cancel(self, self->slots[i]) < 0) {
-                PyErr_Clear();   /* best effort: we still wait below */
-                break;
-            }
-        }
+        if (ring_queue_cancel_all(self) < 0)
+            PyErr_Clear();   /* best effort: we still wait below */
         io_uring_submit(&self->ring);
     }
 
@@ -346,32 +357,36 @@ ring_shutdown(RingObject *self, PyObject *collect, int64_t timeout_ns,
     return status;
 }
 
-static int
-check_kernel_support(struct io_uring *ring)
-{
-    static const int needed[] = {
-        IORING_OP_READ, IORING_OP_WRITE, IORING_OP_FSYNC,
-        IORING_OP_ASYNC_CANCEL,
-    };
-    struct io_uring_probe *probe = io_uring_get_probe_ring(ring);
-    size_t i;
+/* pyaio targets current kernels only; refuse older ones with a clear
+ * message instead of failing request by request. */
+#define MIN_KERNEL_MAJOR 6
+#define MIN_KERNEL_MINOR 1
 
-    if (!probe) {   /* probing itself needs 5.6, same as IORING_OP_READ */
-        PyErr_SetString(PyExc_OSError,
-                        "io_uring is too old: Linux 5.6 or newer required");
-        return -1;
-    }
-    for (i = 0; i < sizeof(needed) / sizeof(needed[0]); i++) {
-        if (!io_uring_opcode_supported(probe, needed[i])) {
-            io_uring_free_probe(probe);
-            PyErr_Format(PyExc_OSError,
-                         "io_uring opcode %d is not supported by this kernel",
-                         needed[i]);
-            return -1;
+static int
+check_kernel_version(void)
+{
+    struct utsname u;
+    int major = 0, minor = 0;
+
+    if (uname(&u) == 0)
+        sscanf(u.release, "%d.%d", &major, &minor);
+    if (major > MIN_KERNEL_MAJOR ||
+        (major == MIN_KERNEL_MAJOR && minor >= MIN_KERNEL_MINOR))
+        return 0;
+    {
+        char msg[160];
+        PyObject *args;
+
+        snprintf(msg, sizeof(msg), "pyaio needs Linux %d.%d or newer "
+                 "(running %s)", MIN_KERNEL_MAJOR, MIN_KERNEL_MINOR,
+                 u.release);
+        args = Py_BuildValue("(is)", ENOSYS, msg);   /* OSError(errno, msg) */
+        if (args) {
+            PyErr_SetObject(PyExc_OSError, args);
+            Py_DECREF(args);
         }
     }
-    io_uring_free_probe(probe);
-    return 0;
+    return -1;
 }
 
 static PyObject *
@@ -385,6 +400,8 @@ Ring_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "|I:Ring", kwlist, &entries))
         return NULL;
 
+    if (check_kernel_version() < 0)
+        return NULL;
     self = (RingObject *)type->tp_alloc(type, 0);
     if (!self)
         return NULL;
@@ -396,8 +413,6 @@ Ring_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         Py_DECREF(self);
         return set_errno_error(-ret);
     }
-    if (check_kernel_support(&self->ring) < 0)
-        goto fail;
     self->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (self->efd < 0) {
         PyErr_SetFromErrno(PyExc_OSError);
@@ -609,25 +624,17 @@ Ring_cancel(RingObject *self, PyObject *arg)
 
 PyDoc_STRVAR(Ring_cancel_all_doc,
 "cancel_all() -> int\n\n"
-"Queue a cancellation for every live request and return how many were\n"
-"queued. Call submit() afterwards.");
+"Queue one cancellation matching every live request and return how many\n"
+"requests are live. Call submit() afterwards.");
 
 static PyObject *
 Ring_cancel_all(RingObject *self, PyObject *Py_UNUSED(ignored))
 {
-    long n = 0;
-    uint32_t i;
-
     if (ring_check_open(self) < 0)
         return NULL;
-    for (i = 0; i < self->nslots; i++) {
-        if (!self->slots[i])
-            continue;
-        if (ring_queue_cancel(self, self->slots[i]) < 0)
-            return NULL;
-        n++;
-    }
-    return PyLong_FromLong(n);
+    if (self->inflight > 0 && ring_queue_cancel_all(self) < 0)
+        return NULL;
+    return PyLong_FromSsize_t(self->inflight);
 }
 
 PyDoc_STRVAR(Ring_submit_doc,

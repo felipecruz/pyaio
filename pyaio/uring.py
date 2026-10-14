@@ -1,6 +1,6 @@
-"""asyncio file I/O on io_uring, with a thread-pool fallback.
+"""asyncio file I/O on io_uring.
 
-    async with pyaio.uring.open_io() as io:
+    async with pyaio.uring.UringIO() as io:
         data = await io.read(fd, 0, 4096)
         await io.write_all(fd, b"hello", 0)
         await io.fsync(fd)
@@ -9,6 +9,10 @@ Requests made in the same event loop iteration are submitted to the kernel
 with a single system call. Completions arrive through an eventfd watched by
 the loop, so results are always delivered on the loop thread. Cancelling the
 awaiting task cancels the kernel request too.
+
+pyaio needs Linux 6.1+ with io_uring allowed. It does not fall back to
+threads: where io_uring is blocked (Docker's default seccomp profile,
+kernel.io_uring_disabled) creating a UringIO raises OSError explaining why.
 
 See docs/architecture.md for how this works and SECURITY.md before enabling
 io_uring on shared machines.
@@ -19,12 +23,9 @@ import errno
 import logging
 import os
 
-try:
-    from ._uring import Ring
-except ImportError:  # extension not built (no liburing at build time)
-    Ring = None
+from ._uring import Ring
 
-__all__ = ['UringIO', 'ThreadIO', 'open_io']
+__all__ = ['UringIO']
 
 logger = logging.getLogger(__name__)
 
@@ -32,29 +33,6 @@ logger = logging.getLogger(__name__)
 def _copy_error(exc):
     # One exception instance per future, so tracebacks don't pile up.
     return OSError(exc.errno, exc.strerror or str(exc))
-
-
-class _Common(object):
-    """Behaviour shared by both backends."""
-
-    async def write_all(self, fd, data, offset):
-        """Write all of data, retrying short writes. Returns len(data)."""
-        view = memoryview(data).cast('B')
-        total = 0
-        while total < len(view):
-            n = await self.write(fd, view[total:], offset)
-            if n == 0:
-                raise OSError(errno.EIO, 'write made no progress')
-            total += n
-            if offset != -1:
-                offset += n
-        return total
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.aclose()
 
 
 class _Op(asyncio.Future):
@@ -70,7 +48,7 @@ class _Op(asyncio.Future):
         return True
 
 
-class UringIO(_Common):
+class UringIO(object):
     """io_uring-backed I/O bound to one event loop.
 
     entries       size of the submission queue.
@@ -81,16 +59,11 @@ class UringIO(_Common):
     Every method must be called from the event loop's thread.
     """
 
-    backend = 'io_uring'
-
     def __init__(self, entries=256, max_inflight=None, loop=None):
-        if Ring is None:
-            raise OSError(errno.ENOSYS,
-                          'pyaio was built without io_uring support')
         if max_inflight is not None and max_inflight < 1:
             raise ValueError('max_inflight must be >= 1')
         self._loop = loop or asyncio.get_running_loop()
-        self._ring = Ring(entries)
+        self._ring = _create_ring(entries)
         self._max_inflight = max_inflight or 2 * entries
         self._backlog = collections.deque()
         self._submit_scheduled = False
@@ -129,6 +102,19 @@ class UringIO(_Common):
     def fsync(self, fd, datasync=False):
         """fsync (or fdatasync) fd; resolves to 0."""
         return self._start(self._ring.submit_fsync, (fd, datasync))
+
+    async def write_all(self, fd, data, offset):
+        """Write all of data, retrying short writes. Returns len(data)."""
+        view = memoryview(data).cast('B')
+        total = 0
+        while total < len(view):
+            n = await self.write(fd, view[total:], offset)
+            if n == 0:
+                raise OSError(errno.EIO, 'write made no progress')
+            total += n
+            if offset != -1:
+                offset += n
+        return total
 
     # -- submission -------------------------------------------------------
 
@@ -268,56 +254,25 @@ class UringIO(_Common):
                 pass
         self._teardown(0)
 
+    async def __aenter__(self):
+        return self
 
-class ThreadIO(_Common):
-    """Same interface as UringIO, implemented with os.pread/os.pwrite on the
-    loop's default executor. Used where io_uring is unavailable.
-
-    Cancelling a call does not stop the thread already running it.
-    """
-
-    backend = 'threads'
-    inflight = 0
-    queued = 0
-
-    def __init__(self, loop=None):
-        self._loop = loop or asyncio.get_running_loop()
-        self.closed = False
-
-    def _run(self, fn, *args):
-        if self.closed:
-            raise ValueError('I/O operation on closed ThreadIO')
-        return self._loop.run_in_executor(None, fn, *args)
-
-    async def read(self, fd, offset, nbytes):
-        if offset == -1:
-            data = await self._run(os.read, fd, nbytes)
-        else:
-            data = await self._run(os.pread, fd, nbytes, offset)
-        return bytearray(data)
-
-    async def write(self, fd, data, offset):
-        if offset == -1:
-            return await self._run(os.write, fd, data)
-        return await self._run(os.pwrite, fd, data, offset)
-
-    async def fsync(self, fd, datasync=False):
-        await self._run(os.fdatasync if datasync else os.fsync, fd)
-        return 0
-
-    def close(self, timeout=None):
-        self.closed = True
-
-    async def aclose(self, timeout=None):
-        self.closed = True
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.aclose()
 
 
-def open_io(entries=256, max_inflight=None, loop=None):
-    """Return a UringIO, or a ThreadIO when io_uring is unavailable (kernel
-    too old, disabled by sysctl, or blocked by seccomp). Check `.backend` to
-    see which one you got; the fallback is logged as a warning."""
+_BLOCKED = (errno.EPERM, errno.EACCES)
+
+
+def _create_ring(entries):
     try:
-        return UringIO(entries, max_inflight, loop)
+        return Ring(entries)
     except OSError as e:
-        logger.warning('io_uring unavailable (%s); using thread pool', e)
-        return ThreadIO(loop)
+        if e.errno in _BLOCKED:
+            raise OSError(e.errno,
+                          'io_uring is blocked here (%s). Common causes: a '
+                          'container seccomp profile such as Docker\'s '
+                          'default, or the kernel.io_uring_disabled sysctl. '
+                          'See SECURITY.md before allowing it.'
+                          % e.strerror) from e
+        raise

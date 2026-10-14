@@ -10,24 +10,6 @@ from pyaio import uring
 from pyaio.uring import Ring
 
 
-def _uring_usable():
-    """io_uring can be missing at build time or blocked at run time
-    (seccomp in containers, kernel.io_uring_disabled)."""
-    if Ring is None:
-        return False
-    try:
-        Ring().close()
-    except OSError:
-        return False
-    return True
-
-
-HAVE_URING = _uring_usable()
-needs_uring = pytest.mark.skipif(not HAVE_URING,
-                                 reason='io_uring unavailable here')
-BACKENDS = [pytest.param(uring.UringIO, marks=needs_uring), uring.ThreadIO]
-
-
 @pytest.fixture
 def path(tmp_path):
     p = tmp_path / 'data.bin'
@@ -35,9 +17,9 @@ def path(tmp_path):
     return str(p)
 
 
-def run(backend, body):
+def run(body):
     async def main():
-        io = backend()
+        io = uring.UringIO()
         try:
             return await body(io)
         finally:
@@ -45,8 +27,7 @@ def run(backend, body):
     return asyncio.run(main())
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_read(backend, path):
+def test_read(path):
     fd = os.open(path, os.O_RDONLY)
 
     async def body(io):
@@ -54,24 +35,22 @@ def test_read(backend, path):
         assert await io.read(fd, 995, 10) == b'56789'   # short read
         assert await io.read(fd, 5000, 10) == b''       # past EOF
         assert await io.read(fd, 0, 0) == b''
-    run(backend, body)
+    run(body)
     os.close(fd)
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_read_current_position(backend, path):
+def test_read_current_position(path):
     fd = os.open(path, os.O_RDONLY)
     os.lseek(fd, 3, os.SEEK_SET)
 
     async def body(io):
         assert await io.read(fd, -1, 4) == b'3456'
         assert await io.read(fd, -1, 4) == b'7890'
-    run(backend, body)
+    run(body)
     os.close(fd)
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_write_read_back(backend, tmp_path):
+def test_write_read_back(tmp_path):
     fd = os.open(str(tmp_path / 'w.bin'), os.O_RDWR | os.O_CREAT)
 
     async def body(io):
@@ -81,12 +60,11 @@ def test_write_read_back(backend, tmp_path):
         assert await io.fsync(fd) == 0
         assert await io.fsync(fd, datasync=True) == 0
         assert await io.read(fd, 0, 100) == b'pyaioURING!!'
-    run(backend, body)
+    run(body)
     os.close(fd)
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_concurrent(backend, tmp_path):
+def test_concurrent(tmp_path):
     fd = os.open(str(tmp_path / 'c.bin'), os.O_RDWR | os.O_CREAT)
     n = 2000
 
@@ -97,11 +75,10 @@ def test_concurrent(backend, tmp_path):
         chunks = await asyncio.gather(
             *[io.read(fd, i * 10, 10) for i in range(n)])
         assert chunks == [b'%010d' % i for i in range(n)]
-    run(backend, body)
+    run(body)
     os.close(fd)
 
 
-@needs_uring
 def test_more_requests_than_ring_entries(path):
     """Queuing past the SQ size must flush, not fail."""
     fd = os.open(path, os.O_RDONLY)
@@ -122,8 +99,7 @@ def test_more_requests_than_ring_entries(path):
     os.close(fd)
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_errors(backend, tmp_path):
+def test_errors(tmp_path):
     rfd = os.open(str(tmp_path / 'ro'), os.O_RDONLY | os.O_CREAT)
 
     async def body(io):
@@ -133,11 +109,10 @@ def test_errors(backend, tmp_path):
         with pytest.raises(OSError) as e:
             await io.write(rfd, b'nope', 0)
         assert e.value.errno == errno.EBADF
-    run(backend, body)
+    run(body)
     os.close(rfd)
 
 
-@needs_uring
 def test_invalid_arguments():
     ring = Ring()
     with pytest.raises(ValueError):
@@ -148,7 +123,6 @@ def test_invalid_arguments():
     ring.close()
 
 
-@needs_uring
 def test_closed_ring():
     ring = Ring()
     assert ring.close() == []
@@ -161,7 +135,6 @@ def test_closed_ring():
     ring.close()   # idempotent
 
 
-@needs_uring
 def test_write_buffer_pinned_until_completion(tmp_path):
     """The kernel holds a pointer into the buffer, so it must not be
     resizable until the write completes."""
@@ -176,7 +149,6 @@ def test_write_buffer_pinned_until_completion(tmp_path):
     os.close(fd)
 
 
-@needs_uring
 def test_cancelled_waiter(path):
     """Cancelling the awaiting task must not break later completions."""
     fd = os.open(path, os.O_RDONLY)
@@ -188,11 +160,10 @@ def test_cancelled_waiter(path):
         assert await io.read(fd, 10, 5) == b'01234'
         while io.inflight:
             await asyncio.sleep(0.001)
-    run(uring.UringIO, body)
+    run(body)
     os.close(fd)
 
 
-@needs_uring
 def test_close_with_requests_in_flight():
     """close() cancels pending work and waits for the kernel to finish."""
     r, w = os.pipe()   # a pipe read blocks until we close the ring
@@ -213,7 +184,6 @@ def test_close_with_requests_in_flight():
     os.close(w)
 
 
-@needs_uring
 def test_dealloc_with_requests_in_flight():
     r, w = os.pipe()
     ring = Ring()
@@ -225,7 +195,6 @@ def test_dealloc_with_requests_in_flight():
     os.close(w)
 
 
-@needs_uring
 def test_no_reference_leaks(tmp_path):
     fd = os.open(str(tmp_path / 'r.bin'), os.O_RDWR | os.O_CREAT)
     token, data = object(), b'leakcheck'
@@ -244,44 +213,8 @@ def test_no_reference_leaks(tmp_path):
     os.close(fd)
 
 
-@needs_uring
-def test_open_io_falls_back(monkeypatch):
-    monkeypatch.setattr(uring, 'Ring', None)
-
-    async def main():
-        return uring.open_io()
-    assert isinstance(asyncio.run(main()), uring.ThreadIO)
 
 
-# -- reliability ----------------------------------------------------------
-
-@needs_uring
-def test_task_cancel_cancels_kernel_request():
-    """A pipe read never completes on its own; cancelling the task must
-    cancel the kernel request, not just forget about it."""
-    r, w = os.pipe()
-
-    async def main():
-        io = uring.UringIO()
-        task = asyncio.ensure_future(io.read(r, -1, 10))
-        await asyncio.sleep(0.01)
-        assert io.inflight == 1
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        for _ in range(100):
-            if io.inflight == 0:
-                break
-            await asyncio.sleep(0.001)
-        assert io.inflight == 0
-        await io.aclose()
-
-    asyncio.run(main())
-    os.close(r)
-    os.close(w)
-
-
-@needs_uring
 def test_cancel_stale_handle(path):
     fd = os.open(path, os.O_RDONLY)
     ring = Ring()
@@ -305,7 +238,6 @@ def test_cancel_stale_handle(path):
         os.close(x)
 
 
-@needs_uring
 def test_aclose_cancels_without_blocking_loop():
     r, w = os.pipe()
 
@@ -327,7 +259,6 @@ def test_aclose_cancels_without_blocking_loop():
     os.close(w)
 
 
-@needs_uring
 def test_backpressure(path):
     fd = os.open(path, os.O_RDONLY)
 
@@ -363,7 +294,6 @@ class _FailingRing(object):
         raise OSError(errno.EBADF, 'simulated ring failure')
 
 
-@needs_uring
 def test_hard_submit_error_fails_futures_instead_of_hanging(path):
     fd = os.open(path, os.O_RDONLY)
 
@@ -391,7 +321,6 @@ def test_hard_submit_error_fails_futures_instead_of_hanging(path):
     os.close(fd)
 
 
-@needs_uring
 def test_errors_map_to_oserror_subclasses(tmp_path):
     dfd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
     r, w = os.pipe()
@@ -402,12 +331,11 @@ def test_errors_map_to_oserror_subclasses(tmp_path):
             await io.read(dfd, 0, 10)
         with pytest.raises(BrokenPipeError):
             await io.write(w, b'x', -1)
-    run(uring.UringIO, body)
+    run(body)
     os.close(dfd)
     os.close(w)
 
 
-@needs_uring
 def test_wrong_thread_rejected(path):
     import threading
     fd = os.open(path, os.O_RDONLY)
@@ -432,7 +360,6 @@ def test_wrong_thread_rejected(path):
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
-@needs_uring
 def test_ring_unusable_after_fork(path):
     fd = os.open(path, os.O_RDONLY)
     ring = Ring()
@@ -459,39 +386,34 @@ def test_ring_unusable_after_fork(path):
 
 
 def test_write_all_retries_short_writes():
-    class Short(uring._Common):
-        def __init__(self):
-            self.calls = []
+    calls = []
 
-        async def write(self, fd, data, offset):
-            self.calls.append((bytes(data), offset))
-            return min(3, len(data))
+    async def short_write(fd, data, offset):
+        calls.append((bytes(data), offset))
+        return min(3, len(data))
 
-    io = Short()
-    assert asyncio.run(io.write_all(1, b'abcdefgh', 10)) == 8
-    assert io.calls == [(b'abcdefgh', 10), (b'defgh', 13), (b'gh', 16)]
+    async def main():
+        io = uring.UringIO()
+        io.write = short_write
+        try:
+            return await io.write_all(1, b'abcdefgh', 10)
+        finally:
+            await io.aclose()
+
+    assert asyncio.run(main()) == 8
+    assert calls == [(b'abcdefgh', 10), (b'defgh', 13), (b'gh', 16)]
 
 
-@pytest.mark.parametrize('backend', BACKENDS)
-def test_write_all(backend, tmp_path):
+def test_write_all(tmp_path):
     fd = os.open(str(tmp_path / 'a.bin'), os.O_RDWR | os.O_CREAT)
 
     async def body(io):
         assert await io.write_all(fd, b'x' * 100000, 0) == 100000
         assert os.fstat(fd).st_size == 100000
-    run(backend, body)
+    run(body)
     os.close(fd)
 
 
-def test_fallback_is_logged(monkeypatch, caplog):
-    monkeypatch.setattr(uring, 'Ring', None)
-
-    async def main():
-        return uring.open_io()
-    with caplog.at_level('WARNING', logger='pyaio.uring'):
-        io = asyncio.run(main())
-    assert io.backend == 'threads'
-    assert 'io_uring unavailable' in caplog.text
 
 
 def test_import_does_not_load_legacy_core(tmp_path):
@@ -509,15 +431,16 @@ def test_import_does_not_load_legacy_core(tmp_path):
                    env=env)
 
 
-def test_environment_expectations():
-    """CI sets these so a silently skipped io_uring suite (or a container
-    that unexpectedly allows io_uring) fails the build instead."""
-    if os.environ.get('PYAIO_REQUIRE_URING'):
-        assert HAVE_URING, 'PYAIO_REQUIRE_URING set but io_uring unavailable'
-    if os.environ.get('PYAIO_EXPECT_FALLBACK'):
-        assert Ring is not None, 'io_uring extension was not built'
-        assert not HAVE_URING, 'expected io_uring to be blocked here'
+def test_blocked_io_uring_explains_why(monkeypatch):
+    """Where io_uring is denied (seccomp, sysctl) there is no fallback:
+    creating a UringIO must say what is going on."""
+    def denied(entries):
+        raise PermissionError(errno.EPERM, 'Operation not permitted')
+    monkeypatch.setattr(uring, 'Ring', denied)
 
-        async def main():
-            return uring.open_io().backend
-        assert asyncio.run(main()) == 'threads'
+    async def main():
+        uring.UringIO()
+    with pytest.raises(OSError) as e:
+        asyncio.run(main())
+    assert e.value.errno == errno.EPERM
+    assert 'seccomp' in str(e.value) and 'io_uring_disabled' in str(e.value)

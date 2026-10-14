@@ -1,11 +1,19 @@
 name: Release
 
-# Builds manylinux wheels and an sdist. Pushing a v* tag also publishes to
-# PyPI through trusted publishing (configure the "pypi" environment and the
-# trusted publisher on PyPI first; see RELEASING.md).
+# Builds and tests manylinux wheels and an sdist. Changes to the C code or
+# packaging on main are built too, so the wheels never go untested until a
+# release. Only a pushed v* tag publishes to PyPI, through trusted
+# publishing (set up the "pypi" environment first; see RELEASING.md).
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - "pyaio/**"
+      - "setup.py"
+      - "pyproject.toml"
+      - "tools/**"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:

@@ -14,9 +14,9 @@
 
 ## Every release
 
-1. Make sure CI is green on `main`. That covers Python 3.10 to 3.14 on
-   Ubuntu 22.04 and 24.04, the sanitizer job, the seccomp fallback job and
-   the package check.
+1. Make sure CI is green on `main`: Python 3.10 to 3.14 on Ubuntu 22.04 and
+   24.04, the sanitizer job, the package check, and the latest `Release`
+   wheel build.
 2. Set the version in `pyaio/__init__.py` (PEP 440, for example `0.5.0rc1`,
    `0.5.0`).
 3. Move the `CHANGELOG.md` entries under that version and date them.
@@ -37,11 +37,11 @@ To try the build without publishing, run the `Release` workflow by hand
 
 ## Not covered by CI
 
-- **Older kernels.** GitHub-hosted runners use recent kernels. pyaio's minimum
-  is 5.6, and cancellation was written to work without 5.19's
-  `IORING_ASYNC_CANCEL_ANY`, but neither has been run on an old kernel. Booting
-  an LTS kernel (5.15, 6.1) with virtme-ng/QEMU on a KVM-capable runner would
-  close this gap.
+- **Environments without io_uring** (containers with default seccomp,
+  hardened hosts, kernels before 6.1) are not supported and not tested.
+  pyaio refuses to start there.
+- **Linux 6.1 itself** is the declared minimum, but CI runs only on
+  GitHub's current runner kernels (6.8 and 6.17).
 - **musllinux wheels** are not built yet.
 - **Abandoning a request on close timeout** has no test, because there is
   no reliable way to create a request the kernel refuses to cancel.

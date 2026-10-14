@@ -14,11 +14,10 @@ pyaiocore = \
     extra_compile_args = ['-D_FILE_OFFSET_BITS=64'],
     define_macros=[('PYAIO_VERSION', '"{0}"'.format(version))])
 
-# io_uring backend; skipped with a warning when liburing is not installed
+# io_uring backend (requires liburing headers at build time)
 pyaiouring = \
     Extension('pyaio._uring',
     sources = ['pyaio/_uring.c'],
-    libraries = ['uring'],
-    optional = True)
+    libraries = ['uring'])
 
 setup(ext_modules = [pyaiocore, pyaiouring])

@@ -7,7 +7,7 @@
 
 ## io_uring is a large, frequently exploited kernel attack surface
 
-The `pyaio.uring` backend uses io_uring. Before enabling it, know that:
+`pyaio.uring` uses io_uring and nothing else. Before enabling it, know that:
 
 * **It has an exploit-heavy history.** In Google's kCTF vulnerability reward
   program, [60% of the Linux kernel exploit submissions targeted
@@ -20,8 +20,9 @@ The `pyaio.uring` backend uses io_uring. Before enabling it, know that:
 * **Containers usually block it.** Docker's default seccomp profile denies
   `io_uring_setup`, `io_uring_enter` and `io_uring_register`
   ([Docker docs](https://docs.docker.com/engine/security/seccomp/)). pyaio
-  detects this and falls back to threads. Do not weaken a container's
-  seccomp profile just to enable pyaio's io_uring backend.
+  then refuses to start and says why. Do not weaken a container's seccomp
+  profile just to run pyaio. (pyaio's own CI does this, but only in
+  throwaway build containers on disposable runners, to test the wheels.)
 * **It can hide activity from security monitoring.** Operations submitted
   through io_uring do not appear as their own syscalls. Tools that watch
   syscalls (some EDR agents, `auditd` rules, seccomp-based sandboxes) see
@@ -35,12 +36,13 @@ The `pyaio.uring` backend uses io_uring. Before enabling it, know that:
   disables it for everyone
   ([patch](https://lkml.iu.edu/hypermail/linux/kernel/2308.2/00994.html)).
   On shared or multi-tenant machines, `1` or `2` is a reasonable default.
-  pyaio falls back to threads when it is denied.
+  pyaio raises `PermissionError` when it is denied.
 
-**Recommendation:** use the io_uring backend on machines you control for
-workloads you trust. Everywhere else, keep io_uring disabled and let pyaio
-use its thread-pool fallback. `open_io()` logs a warning when it falls back,
-and `io.backend` tells you which one you got.
+**Recommendation:** use pyaio on machines you control for workloads you
+trust. Everywhere else, keep io_uring disabled and use something else for
+file I/O (a thread pool works anywhere). pyaio deliberately has no
+fallback, so it never quietly runs in an environment its maintainers did
+not intend.
 
 ## What pyaio itself does (and does not do)
 
