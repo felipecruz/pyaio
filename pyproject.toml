@@ -28,7 +28,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/felipecruz/pyaio"
-Changelog = "https://github.com/felipecruz/pyaio/blob/master/CHANGELOG.md"
+Changelog = "https://github.com/felipecruz/pyaio/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = ["pyaio"]

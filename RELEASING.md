@@ -14,7 +14,7 @@
 
 ## Every release
 
-1. Make sure CI is green on `master`. That covers Python 3.10 to 3.14 on
+1. Make sure CI is green on `main`. That covers Python 3.10 to 3.14 on
    Ubuntu 22.04 and 24.04, the sanitizer job, the seccomp fallback job and
    the package check.
 2. Set the version in `pyaio/__init__.py` (PEP 440, for example `0.5.0rc1`,
@@ -23,7 +23,7 @@
 4. Commit, then tag and push:
    ```sh
    git tag -a v0.5.0rc1 -m "pyaio 0.5.0rc1"
-   git push origin master v0.5.0rc1
+   git push origin main v0.5.0rc1
    ```
 5. The `Release` workflow builds manylinux wheels (x86_64 and aarch64, with
    liburing bundled), tests them, builds the sdist and publishes everything.
