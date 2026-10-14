@@ -32,7 +32,7 @@ jobs:
         working-directory: tests
         env:
           PYAIO_REQUIRE_URING: "1"
-        run: python -m pytest -q -rs .
+        run: ../tools/ci-pytest.sh .
 
   sanitizers:
     name: ASan + UBSan
@@ -57,7 +57,7 @@ jobs:
           PYTHONMALLOC: malloc
         run: |
           export LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libubsan.so)"
-          python -m pytest -q -rs
+          tools/ci-pytest.sh
 
   fallback:
     name: Fallback under Docker's default seccomp profile
