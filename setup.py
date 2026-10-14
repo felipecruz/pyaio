@@ -1,10 +1,11 @@
-from distutils.core import setup, Extension
-import sys
+# Project metadata lives in pyproject.toml; this file only declares the
+# C extensions, which setuptools cannot express declaratively.
+import re
 
-if sys.version < '2.7' and not sys.version[0] == "3":
-    print("pyaio requires python of at least version 2.7 to build correctly")
+from setuptools import setup, Extension
 
-version = '0.4'
+with open('pyaio/__init__.py') as f:
+    version = re.search(r"^__version__ = '([^']+)'", f.read(), re.M).group(1)
 
 pyaiocore = \
     Extension('pyaio.core',
@@ -13,19 +14,11 @@ pyaiocore = \
     extra_compile_args = ['-D_FILE_OFFSET_BITS=64'],
     define_macros=[('PYAIO_VERSION', '"{0}"'.format(version))])
 
-setup(
-    name = 'pyaio',
-    version = version,
-    description = 'Python Asynchronous I/O bindings (aio.h)',
-    author = 'Felipe Cruz',
-    author_email = 'felipecruz@loogica.net',
-    url = 'https://github.com/felipecruz/pyaio',
-    classifiers =   [
-                    'Operating System :: POSIX',
-                    'Development Status :: 4 - Beta',
-                    'License :: OSI Approved :: BSD License'
-                    ],
-    ext_modules = [pyaiocore],
-    py_modules = ['pyaio.gevent'])
+# io_uring backend; skipped with a warning when liburing is not installed
+pyaiouring = \
+    Extension('pyaio._uring',
+    sources = ['pyaio/_uring.c'],
+    libraries = ['uring'],
+    optional = True)
 
-
+setup(ext_modules = [pyaiocore, pyaiouring])

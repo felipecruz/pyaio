@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyaio"
+dynamic = ["version"]
+description = "Linux asynchronous file I/O: asyncio on io_uring, plus POSIX AIO bindings"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Felipe Cruz", email = "felipecruz@loogica.net" },
+    { name = "Jason Fried", email = "me@jasonfried.info" },
+]
+keywords = ["io_uring", "aio", "asyncio", "linux", "file io"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: System :: Filesystems",
+]
+
+[project.urls]
+Homepage = "https://github.com/felipecruz/pyaio"
+Changelog = "https://github.com/felipecruz/pyaio/blob/master/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["pyaio"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pyaio.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.exclude-package-data]
+pyaio = ["*.c"]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+# musllinux would need liburing built against musl; not supported yet
+skip = "*-musllinux_*"
+test-requires = "pytest"
+# Containers usually block io_uring via seccomp, so the io_uring tests skip
+# here and the fallback is what gets exercised; CI runs the full suite on
+# the host as well.
+test-command = "python -m pytest -q {project}/tests"
+
+[tool.cibuildwheel.linux]
+# Build liburing from a pinned release. auditwheel then copies liburing.so
+# into the wheel, so users do not need it installed.
+before-all = "sh {project}/tools/install-liburing.sh"

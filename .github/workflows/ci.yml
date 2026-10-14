@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Show kernel and io_uring policy
+        run: uname -r; sysctl kernel.io_uring_disabled || true
+      - run: tools/install-liburing.sh
+      - run: python -m pip install . pytest
+      # Run from tests/ so the installed package is imported, not the tree.
+      - name: Test installed package (io_uring required)
+        working-directory: tests
+        env:
+          PYAIO_REQUIRE_URING: "1"
+        run: python -m pytest -q -rs .
+
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: tools/install-liburing.sh
+      - run: python -m pip install setuptools pytest
+      - name: Build with sanitizers
+        env:
+          CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+          LDFLAGS: -fsanitize=address,undefined
+        run: python setup.py build_ext --inplace
+      - name: Test
+        env:
+          PYAIO_REQUIRE_URING: "1"
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          PYTHONMALLOC: malloc
+        run: |
+          export LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libubsan.so)"
+          python -m pytest -q -rs
+
+  fallback:
+    name: Fallback under Docker's default seccomp profile
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test in a container that blocks io_uring
+        run: |
+          docker run --rm -v "$PWD:/src" -e PYAIO_EXPECT_FALLBACK=1 python:3.13 sh -c '
+            set -e
+            sh /src/tools/install-liburing.sh
+            pip install -q /src pytest
+            cd /src/tests && python -m pytest -q -rs -p no:cacheprovider .'
+
+  package:
+    name: Build and check distributions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: tools/install-liburing.sh
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check --strict dist/*

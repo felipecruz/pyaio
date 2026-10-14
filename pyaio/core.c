@@ -26,45 +26,49 @@ PyDoc_STRVAR(pyaio_init_doc,
         "aio_init(max_threads, max_queue_size, max_thread_idle_time)\n");
 
 
+static void
+pyaio_cb_free(Pyaio_cb *aio)
+{
+    if (aio->buffer_view.obj)
+        PyBuffer_Release(&aio->buffer_view);
+    Py_XDECREF(aio->buffer);
+    Py_XDECREF(aio->callback);
+    free(aio->cb);
+    free(aio);
+}
+
+/* Runs on the main thread (pending call) or with the GIL held. */
 static int _async_callback(void *arg)
 {
     Pyaio_cb *aio = (Pyaio_cb *)arg;
-    struct aiocb *cb;
-    PyObject *callback, *args, *result, *buffer;
-    Py_buffer *buffer_view;
+    struct aiocb *cb = aio->cb;
+    PyObject *args, *result = NULL;
+    int err = aio_error(cb);
+    ssize_t ret = aio_return(cb);
 
-    cb = aio->cb;
-    callback = aio->callback;
-    buffer_view = &(aio->buffer_view);
-    buffer = aio->buffer; /* Should have ref count of +2 */
-
-    PyBuffer_Release(buffer_view); /* -1 refcount we are done with it */
+    PyBuffer_Release(&aio->buffer_view); /* we are done with the memory */
 
     if (aio->read) {
-        if (aio_return(cb) > 0) {
-            if (aio_return(cb) < cb->aio_nbytes) {
-                PyByteArray_Resize(buffer, aio_return(cb));
-            }
-        }
-        else {
-            PyByteArray_Resize(buffer, 0);
-        }
-        args = Py_BuildValue("(Oni)", buffer, aio_return(cb), aio_error(cb));
+        Py_ssize_t size = ret > 0 ? ret : 0;
+        if ((size_t)size < cb->aio_nbytes &&
+            PyByteArray_Resize(aio->buffer, size) < 0)
+            PyErr_WriteUnraisable(aio->callback);
+        args = Py_BuildValue("(Oni)", aio->buffer, (Py_ssize_t)ret, err);
     }
     else { /* WRITE */
-        args = Py_BuildValue("(ni)", aio_return(cb), aio_error(cb));
+        args = Py_BuildValue("(ni)", (Py_ssize_t)ret, err);
     }
-    result = PyObject_CallObject(callback, args);
+    if (args) {
+        result = PyObject_CallObject(aio->callback, args);
+        Py_DECREF(args);
+    }
     if (result == NULL) {
-        printf("Exception in aio callback, dying!\n");
-        kill(getpid(), SIGKILL);  // DIE FAST
+        /* Report it like an exception in a __del__ method. This used to
+         * SIGKILL the whole process. */
+        PyErr_WriteUnraisable(aio->callback);
     }
-    Py_XDECREF(buffer); /* -1 refcount. we should be at 0 now */
     Py_XDECREF(result);
-    Py_XDECREF(callback);
-    Py_XDECREF(args);
-    free((struct aiocb *)cb);
-    free(aio);
+    pyaio_cb_free(aio);
     return 0;
 }
 
@@ -85,143 +89,132 @@ static void aio_completion_handler(sigval_t sigval)
 
 static PyObject *
 pyaio_init(PyObject *dummy, PyObject *args) {
-    struct aioinit *init;
+    struct aioinit init;
     int aio_threads, aio_num, aio_idle_time;
 
-    Py_XINCREF(args);
-    if (PyArg_ParseTuple(args, "iii", &aio_threads, &aio_num, &aio_idle_time)) {
-        init = malloc(sizeof(struct aioinit));
-        if (!init)
-            return PyErr_NoMemory();
-        init->aio_threads = aio_threads;
-        init->aio_num = aio_num;
-        init->aio_idle_time = aio_idle_time;
-        aio_init(init);
-        free(init);
-    }
-    Py_XDECREF(args);
-    Py_XINCREF(Py_None);
-    return Py_None;
+    if (!PyArg_ParseTuple(args, "iii:aio_init", &aio_threads, &aio_num,
+                          &aio_idle_time))
+        return NULL;
+    memset(&init, 0, sizeof(init));
+    init.aio_threads = aio_threads;
+    init.aio_num = aio_num;
+    init.aio_idle_time = aio_idle_time;
+    aio_init(&init);
+    Py_RETURN_NONE;
 }
 
-
-static PyObject *
-pyaio_read(PyObject *dummy, PyObject *args) {
-
-    int fd;
-    Py_ssize_t numbytes, offset, ret;
-    Pyaio_cb *aio;
-    PyObject *callback, *return_, *buffer;
-    Py_buffer *buffer_view;
-
-    Py_XINCREF(args);
-    if (PyArg_ParseTuple(args, "innO:set_callback", &fd, &offset, &numbytes,
-                                 &callback)) {
-        if (!PyCallable_Check(callback)) {
-            PyErr_SetString(PyExc_TypeError,
-                    "parameter must be callable");
-            return NULL;
-        }
-        Py_XINCREF(callback); /* Add a reference to new callback */
-    }
-    Py_XDECREF(args);
-    aio = malloc(sizeof(Pyaio_cb));
-    if (!aio)
-        return PyErr_NoMemory();
-    buffer_view = &(aio->buffer_view);
-
-    aio->cb = malloc(sizeof(struct aiocb));
-    if (!aio->cb)
-        return PyErr_NoMemory();
-    bzero((char *) aio->cb, sizeof(struct aiocb));
-
-    /* Empty ByteArray of the requested read size INCREF*/
-    buffer = PyByteArray_FromStringAndSize(NULL, numbytes);
-    /* Get the buffer view / put it in the aio struct INCREF */
-    PyObject_GetBuffer(buffer, buffer_view, PyBUF_CONTIG);
-
-    aio->callback = callback;
-    aio->buffer = buffer;
-    aio->read = 1;  /* Read Operation */
-
-    aio->cb->aio_buf = buffer_view->buf;
+/* Fill in the aiocb fields shared by reads and writes. */
+static void
+pyaio_prepare(Pyaio_cb *aio, int fd, Py_ssize_t offset)
+{
+    aio->cb->aio_buf = aio->buffer_view.buf;
     aio->cb->aio_fildes = fd;
-    aio->cb->aio_nbytes = buffer_view->len;
+    aio->cb->aio_nbytes = aio->buffer_view.len;
     aio->cb->aio_offset = offset;
     aio->cb->aio_sigevent.sigev_notify = SIGEV_THREAD;  /* EvIL */
     aio->cb->aio_sigevent.sigev_notify_attributes = NULL;
     aio->cb->aio_sigevent.sigev_notify_function = aio_completion_handler;
     aio->cb->aio_sigevent.sigev_value.sival_ptr = aio;
+}
 
-    ret = aio_read(aio->cb);
+static Pyaio_cb *
+pyaio_cb_new(PyObject *callback)
+{
+    Pyaio_cb *aio;
 
-    if (ret < 0) {
-        return PyErr_SetFromErrno(PyExc_IOError);
+    if (!PyCallable_Check(callback)) {
+        PyErr_SetString(PyExc_TypeError, "parameter must be callable");
+        return NULL;
     }
-    else {
-        return_ = Py_BuildValue("n", ret);
-        return return_;
+    aio = calloc(1, sizeof(Pyaio_cb));
+    if (!aio) {
+        PyErr_NoMemory();
+        return NULL;
     }
+    aio->cb = calloc(1, sizeof(struct aiocb));
+    if (!aio->cb) {
+        free(aio);
+        PyErr_NoMemory();
+        return NULL;
+    }
+    Py_INCREF(callback);
+    aio->callback = callback;
+    return aio;
+}
+
+static PyObject *
+pyaio_read(PyObject *dummy, PyObject *args) {
+    int fd;
+    Py_ssize_t numbytes, offset;
+    Pyaio_cb *aio;
+    PyObject *callback;
+
+    if (!PyArg_ParseTuple(args, "innO:aio_read", &fd, &offset, &numbytes,
+                          &callback))
+        return NULL;
+    if (numbytes < 0) {
+        PyErr_SetString(PyExc_ValueError, "length must be >= 0");
+        return NULL;
+    }
+    aio = pyaio_cb_new(callback);
+    if (!aio)
+        return NULL;
+    aio->read = 1;  /* Read Operation */
+
+    /* Empty ByteArray of the requested read size */
+    aio->buffer = PyByteArray_FromStringAndSize(NULL, numbytes);
+    if (!aio->buffer)
+        goto fail;
+    if (PyObject_GetBuffer(aio->buffer, &aio->buffer_view, PyBUF_CONTIG) < 0)
+        goto fail;
+    pyaio_prepare(aio, fd, offset);
+
+    if (aio_read(aio->cb) < 0) {
+        PyErr_SetFromErrno(PyExc_IOError);
+        goto fail;
+    }
+    return PyLong_FromLong(0);
+
+fail:
+    pyaio_cb_free(aio);
+    return NULL;
 }
 
 static PyObject *
 pyaio_write(PyObject *dummy, PyObject *args) {
-
-    PyObject *buffer;
-    Py_buffer *buffer_view;
-
     int fd;
-    Py_ssize_t offset, ret;
-
+    Py_ssize_t offset;
     Pyaio_cb *aio;
-    PyObject *callback, *return_;
-    Py_XINCREF(args);
-    if (PyArg_ParseTuple(args, "iOnO:set_callback", &fd, &buffer,
-                          &offset, &callback)) {
-        if (!PyCallable_Check(callback)) {
-            PyErr_SetString(PyExc_TypeError,
-                    "parameter must be callable");
-            return NULL;
-        }
-        if (!PyObject_CheckBuffer(buffer)) {
-            PyErr_SetString(PyExc_TypeError,
-                    "write buffer must support buffer interface");
-            return NULL;
-        }
-        Py_XINCREF(callback); /* Add a reference to new callback */
-        Py_XINCREF(buffer);
+    PyObject *buffer, *callback;
+
+    if (!PyArg_ParseTuple(args, "iOnO:aio_write", &fd, &buffer, &offset,
+                          &callback))
+        return NULL;
+    if (!PyObject_CheckBuffer(buffer)) {
+        PyErr_SetString(PyExc_TypeError,
+                "write buffer must support buffer interface");
+        return NULL;
     }
-    Py_XDECREF(args);
-
-    aio = malloc(sizeof(Pyaio_cb));
-    buffer_view = &(aio->buffer_view);
-    /* Get a Buffer INCREF */
-    PyObject_GetBuffer(buffer, buffer_view, PyBUF_CONTIG_RO);
-
-
-    aio->cb = malloc(sizeof(struct aiocb));
-    bzero((void *) aio->cb, sizeof(struct aiocb));
+    aio = pyaio_cb_new(callback);
+    if (!aio)
+        return NULL;
     aio->read = 0;  /* Write Operation */
-    aio->callback = callback;
+
+    Py_INCREF(buffer);
     aio->buffer = buffer;
-    aio->cb->aio_buf = buffer_view->buf;
-    aio->cb->aio_fildes = fd;
-    aio->cb->aio_nbytes = buffer_view->len;
-    aio->cb->aio_offset = offset;
-    aio->cb->aio_sigevent.sigev_notify = SIGEV_THREAD;
-    aio->cb->aio_sigevent.sigev_notify_attributes = NULL;
-    aio->cb->aio_sigevent.sigev_notify_function = aio_completion_handler;
-    aio->cb->aio_sigevent.sigev_value.sival_ptr = aio;
+    if (PyObject_GetBuffer(buffer, &aio->buffer_view, PyBUF_CONTIG_RO) < 0)
+        goto fail;
+    pyaio_prepare(aio, fd, offset);
 
-    ret = aio_write(aio->cb);
+    if (aio_write(aio->cb) < 0) {
+        PyErr_SetFromErrno(PyExc_IOError);
+        goto fail;
+    }
+    return PyLong_FromLong(0);
 
-    if (ret < 0) {
-        return PyErr_SetFromErrno(PyExc_IOError);
-    }
-    else {
-        return_ = Py_BuildValue("n", ret);
-        return return_;
-    }
+fail:
+    pyaio_cb_free(aio);
+    return NULL;
 }
 
 static PyMethodDef PyaioMethods[] = {
@@ -256,8 +249,10 @@ init_pyaio(void) {
     PyObject *m;
     PyObject *__version__;
 
-    /* We will be using threads */
+#if PY_VERSION_HEX < 0x03090000
+    /* We will be using threads (automatic since Python 3.7) */
     PyEval_InitThreads();
+#endif
 #if PY_MAJOR_VERSION >= 3
     __version__ = PyUnicode_FromFormat("%s", PYAIO_VERSION);
 #else
